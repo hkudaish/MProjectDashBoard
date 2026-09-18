@@ -1,0 +1,32 @@
+export type TaskStatus = "not_started" | "in_progress" | "review" | "completed" | "blocked";
+
+export type Task = {
+  id: string;
+  productId: string;
+  productName: string;
+  title: string;
+  plannedDate: string;
+  endDate: string;
+  ownerType: string;
+  assignee: string;
+  status: TaskStatus;
+  progress: number;
+  notes: string;
+  sourceOrder: number;
+  updatedAt: string;
+};
+
+export const STATUS_LABELS: Record<TaskStatus, string> = {
+  not_started: "لم يبدأ",
+  in_progress: "قيد التنفيذ",
+  review: "بانتظار المراجعة",
+  completed: "مكتمل",
+  blocked: "متعثر",
+};
+
+export const OWNER_LABELS: Record<string, string> = {
+  wamy: "الندوة العالمية",
+  vendor: "الشركة المنفذة",
+  joint: "مسؤولية مشتركة",
+  unassigned: "غير محدد",
+};
