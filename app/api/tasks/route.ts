@@ -1,15 +1,9 @@
-import { getStore } from "@netlify/blobs";
 import { DEFAULT_TASKS } from "@/lib/task-data";
+import { createTaskStore } from "@/lib/task-store";
 import type { Task } from "@/lib/types";
 
 const VALID_STATUSES = new Set(["not_started", "in_progress", "review", "completed", "blocked"]);
 const VALID_OWNERS = new Set(["wamy", "vendor", "joint", "unassigned"]);
-
-const TASKS_KEY = "tasks";
-
-function taskStore() {
-  return getStore("wamy-task-dashboard", { consistency: "strong" });
-}
 
 function seedTasks(): Task[] {
   const updatedAt = new Date().toISOString();
@@ -17,12 +11,12 @@ function seedTasks(): Task[] {
 }
 
 async function readTasks() {
-  const store = taskStore();
-  const existing = await store.get(TASKS_KEY, { type: "json" }) as Task[] | null;
-  if (Array.isArray(existing) && existing.length > 0) return { store, tasks: existing };
+  const store = createTaskStore();
+  const existing = await store.getTasks();
+  if (existing.length > 0) return { store, tasks: existing };
 
   const tasks = seedTasks();
-  await store.setJSON(TASKS_KEY, tasks);
+  await store.setTasks(tasks);
   return { store, tasks };
 }
 
@@ -76,7 +70,7 @@ export async function PATCH(request: Request) {
     const updated = { ...tasks[index], ...update } as Task;
     const nextTasks = [...tasks];
     nextTasks[index] = updated;
-    await store.setJSON(TASKS_KEY, nextTasks);
+    await store.setTasks(nextTasks);
     return Response.json({ task: updated });
   } catch (error) {
     console.error("PATCH /api/tasks failed", error);
