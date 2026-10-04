@@ -408,7 +408,7 @@ export function TaskDashboard() {
             {isAdmin ? <>
               <span className="hidden max-w-40 truncate text-sm font-semibold text-emerald-700 sm:inline">{adminEmail}</span>
               <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void logoutAdmin()}><LogOut className="size-4" /><span className="hidden sm:inline">خروج المسؤول</span></Button>
-            </> : <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => { setLoginError(""); setLoginOpen(true); }} disabled={authLoading || !authConfigured}><LogIn className="size-4" /><span className="hidden sm:inline">دخول المسؤول</span></Button>}
+            </> : <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => { setLoginError(""); setLoginOpen(true); }} disabled={authLoading}><LogIn className="size-4" /><span className="hidden sm:inline">دخول المسؤول</span></Button>}
             <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={refreshTasks}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
           </div>
         </div>
