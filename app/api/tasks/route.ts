@@ -1,5 +1,6 @@
 import { DEFAULT_TASKS } from "@/lib/task-data";
 import { createTaskStore } from "@/lib/task-store";
+import { getAdminSession } from "@/lib/admin-auth";
 import type { Task } from "@/lib/types";
 
 const VALID_STATUSES = new Set(["not_started", "in_progress", "review", "completed", "blocked"]);
@@ -38,6 +39,9 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
+    if (!getAdminSession(request.headers)) {
+      return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول لتعديل البيانات." }, { status: 401 });
+    }
     const payload = (await request.json()) as Record<string, unknown>;
     const id = typeof payload.id === "string" ? payload.id : "";
     if (!id) return Response.json({ error: "معرّف المهمة مطلوب." }, { status: 400 });

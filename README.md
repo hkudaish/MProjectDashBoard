@@ -39,6 +39,18 @@ There is also a D1/Drizzle layer prepared for a more structured database-backed 
 - [db/schema.ts](db/schema.ts)
 - [drizzle.config.ts](drizzle.config.ts)
 
+## Admin login and write access
+
+Task data can be viewed without signing in. Only allowlisted admins with a valid signed session can update tasks; the API rejects unauthorized `PATCH` requests independently of the UI. Admin sessions use an HttpOnly, Secure, SameSite cookie and expire after 12 hours.
+
+Configure these environment variables in Netlify under **Project configuration → Environment variables**, for the production deploy context:
+
+- `ADMIN_EMAILS`: comma-separated email addresses allowed to administer tasks.
+- `ADMIN_PASSWORD`: a strong password shared by the configured admin accounts.
+- `ADMIN_SESSION_SECRET`: a random secret of at least 32 characters used to sign sessions. Generate one with `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"`.
+
+Save the variables and trigger a new production deploy. Until all three values are configured, the dashboard remains read-only and the API does not accept task edits. Do not commit these values or place them in `NEXT_PUBLIC_*` variables.
+
 ## Local development
 
 Install dependencies:

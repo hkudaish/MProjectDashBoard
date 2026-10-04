@@ -13,6 +13,8 @@ import {
   Film,
   Images,
   LayoutDashboard,
+  LogIn,
+  LogOut,
   ListChecks,
   Loader2,
   Pencil,
@@ -144,6 +146,15 @@ function LoadingView() {
 
 export function TaskDashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [authConfigured, setAuthConfigured] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
@@ -185,6 +196,61 @@ export function TaskDashboard() {
     });
     return () => { current = false; };
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    void fetch("/api/auth/session", { cache: "no-store" }).then(async (response) => {
+      const data = await response.json() as { configured?: boolean; isAdmin?: boolean; email?: string | null };
+      if (!response.ok) throw new Error("تعذر التحقق من صلاحيات الدخول.");
+      if (!current) return;
+      setAuthConfigured(Boolean(data.configured));
+      setIsAdmin(Boolean(data.isAdmin));
+      setAdminEmail(data.email ?? "");
+    }).catch(() => {
+      if (current) setAuthConfigured(false);
+    }).finally(() => {
+      if (current) setAuthLoading(false);
+    });
+    return () => { current = false; };
+  }, []);
+
+  async function submitAdminLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoggingIn(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await response.json() as { isAdmin?: boolean; email?: string; error?: string };
+      if (!response.ok || !data.isAdmin) throw new Error(data.error || "تعذر تسجيل الدخول.");
+      setIsAdmin(true);
+      setAdminEmail(data.email ?? loginEmail);
+      setLoginPassword("");
+      setLoginOpen(false);
+      toast.success("تم تسجيل الدخول كمسؤول");
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "تعذر تسجيل الدخول.");
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
+  async function logoutAdmin() {
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) throw new Error("تعذر تسجيل الخروج.");
+      setIsAdmin(false);
+      setAdminEmail("");
+      setEditing(null);
+      setDraft(null);
+      toast.success("تم تسجيل الخروج");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تسجيل الخروج.");
+    }
+  }
 
   const persistTask = useCallback(async (id: string, patch: TaskPatch, silent = false) => {
     const response = await fetch("/api/tasks", {
@@ -276,6 +342,7 @@ export function TaskDashboard() {
     .slice(0, 6), [tasks]);
 
   function openTask(task: Task) {
+    if (!isAdmin) return;
     setEditing(task);
     setDraft({ ...task });
   }
@@ -337,7 +404,13 @@ export function TaskDashboard() {
               <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">خطة التنفيذ للجزء الأول - ثلاثة أشهر</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={refreshTasks}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
+          <div className="flex items-center gap-2">
+            {isAdmin ? <>
+              <span className="hidden max-w-40 truncate text-sm font-semibold text-emerald-700 sm:inline">{adminEmail}</span>
+              <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void logoutAdmin()}><LogOut className="size-4" /><span className="hidden sm:inline">خروج المسؤول</span></Button>
+            </> : <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => { setLoginError(""); setLoginOpen(true); }} disabled={authLoading || !authConfigured}><LogIn className="size-4" /><span className="hidden sm:inline">دخول المسؤول</span></Button>}
+            <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={refreshTasks}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
+          </div>
         </div>
       </header>
 
@@ -426,7 +499,7 @@ export function TaskDashboard() {
               <div className="hidden lg:block">
                 <Table dir="rtl" className="text-right [&_td]:text-right [&_th]:text-right">
                   <TableHeader><TableRow className="bg-slate-50 hover:bg-slate-50"><TableHead className="w-[44%] px-5 text-right">المهمة</TableHead><TableHead className="text-right">الموعد</TableHead><TableHead className="text-right">المسؤول</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-right">الإنجاز</TableHead><TableHead className="w-14" /></TableRow></TableHeader>
-                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><p className="text-sm font-bold text-[#116d7b]">{task.productName}</p><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}</TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4"><Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className="h-10 w-[165px] rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><Progress value={task.progress} className="bg-slate-100 [&_[data-slot=progress-indicator]]:bg-[#177f8f]" /></div></TableCell><TableCell className="px-4"><Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button></TableCell></TableRow>)}</TableBody>
+                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><p className="text-sm font-bold text-[#116d7b]">{task.productName}</p><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}</TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className="h-10 w-[165px] rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><Progress value={task.progress} className="bg-slate-100 [&_[data-slot=progress-indicator]]:bg-[#177f8f]" /></div></TableCell><TableCell className="px-4">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell></TableRow>)}</TableBody>
                 </Table>
               </div>
 
@@ -441,7 +514,20 @@ export function TaskDashboard() {
         </Tabs>
       </div>
 
-      <Dialog open={!!editing} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setDraft(null); } }}>
+      <Dialog open={loginOpen} onOpenChange={(open) => { if (!loggingIn) setLoginOpen(open); }}>
+        <DialogContent dir="rtl" className="text-right sm:max-w-md">
+          <DialogHeader className="text-right sm:text-right"><DialogTitle>دخول المسؤول</DialogTitle><DialogDescription>الدخول مخصص للبريد الإلكتروني المعتمد لإدارة لوحة المتابعة.</DialogDescription></DialogHeader>
+          <form onSubmit={(event) => void submitAdminLogin(event)} className="grid gap-4">
+            <label className="grid gap-2 text-sm font-bold">البريد الإلكتروني<Input type="email" autoComplete="username" required value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} /></label>
+            <label className="grid gap-2 text-sm font-bold">كلمة المرور<Input type="password" autoComplete="current-password" required value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} /></label>
+            {loginError && <p role="alert" className="text-sm font-semibold text-red-700">{loginError}</p>}
+            {!authConfigured && <p role="alert" className="text-sm text-amber-800">دخول المسؤول غير مُعدّ على الخادم.</p>}
+            <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button type="submit" className="bg-[#116d7b] hover:bg-[#0c5965]" disabled={loggingIn || !authConfigured}>{loggingIn ? <Loader2 className="animate-spin" /> : <LogIn />}دخول</Button><Button type="button" variant="outline" onClick={() => setLoginOpen(false)} disabled={loggingIn}>إلغاء</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editing && isAdmin} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setDraft(null); } }}>
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl border-slate-200 text-right [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4 sm:max-w-2xl">
           <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">تحديث المهمة</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
           {draft && <div className="grid gap-5 py-2">
