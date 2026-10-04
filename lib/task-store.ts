@@ -51,12 +51,6 @@ function normaliseTask(raw: unknown): Task | null {
   };
 }
 
-function hasNetlifyBlobConfig() {
-  const siteId = process.env.NETLIFY_SITE_ID ?? process.env.NEXT_PUBLIC_NETLIFY_SITE_ID;
-  const token = process.env.NETLIFY_PERSONAL_ACCESS_TOKEN ?? process.env.NETLIFY_TOKEN;
-  return Boolean(siteId && token);
-}
-
 function createFallbackStore(): TaskStore {
   const map = new Map<string, string>();
 
@@ -79,10 +73,7 @@ function createFallbackStore(): TaskStore {
 }
 
 export function createTaskStore(): TaskStore {
-  const isNetlifyRuntime = process.env.NETLIFY === "true" ||
-    Boolean(process.env.NETLIFY_BLOBS_CONTEXT) ||
-    hasNetlifyBlobConfig();
-  if (!isNetlifyRuntime) {
+  if (process.env.NODE_ENV !== "production" || process.env.TASK_STORE_MODE === "memory") {
     return createFallbackStore();
   }
 
