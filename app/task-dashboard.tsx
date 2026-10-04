@@ -77,6 +77,13 @@ function formatDate(value: string, withYear = false) {
   }).format(parseDate(value));
 }
 
+async function requestTasks() {
+  const response = await fetch("/api/tasks", { cache: "no-store" });
+  const data = await response.json() as { tasks?: Task[]; error?: string };
+  if (!response.ok) throw new Error(data.error || "تعذر تحميل المهام.");
+  return data.tasks ?? [];
+}
+
 function dateRange(task: Task) {
   if (task.plannedDate === task.endDate) return formatDate(task.plannedDate, true);
   return `${formatDate(task.plannedDate)} - ${formatDate(task.endDate, true)}`;
@@ -152,13 +159,9 @@ export function TaskDashboard() {
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
 
   const loadTasks = useCallback(async () => {
-    setLoading(true);
-    setLoadError("");
     try {
-      const response = await fetch("/api/tasks", { cache: "no-store" });
-      const data = await response.json() as { tasks?: Task[]; error?: string };
-      if (!response.ok) throw new Error(data.error || "تعذر تحميل المهام.");
-      setTasks(data.tasks ?? []);
+      setTasks(await requestTasks());
+      setLoadError("");
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
     } finally {
@@ -166,7 +169,22 @@ export function TaskDashboard() {
     }
   }, []);
 
-  useEffect(() => { void loadTasks(); }, [loadTasks]);
+  const refreshTasks = useCallback(() => {
+    setLoading(true);
+    void loadTasks();
+  }, [loadTasks]);
+
+  useEffect(() => {
+    let current = true;
+    void requestTasks().then((loadedTasks) => {
+      if (current) setTasks(loadedTasks);
+    }).catch((error: unknown) => {
+      if (current) setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
+    }).finally(() => {
+      if (current) setLoading(false);
+    });
+    return () => { current = false; };
+  }, []);
 
   const persistTask = useCallback(async (id: string, patch: TaskPatch, silent = false) => {
     const response = await fetch("/api/tasks", {
@@ -302,7 +320,7 @@ export function TaskDashboard() {
         <AlertTriangle className="mx-auto mb-4 size-10 text-red-500" />
         <h1 className="text-xl font-black text-slate-900">تعذر فتح لوحة المتابعة</h1>
         <p className="mt-2 text-base leading-7 text-slate-600">{loadError}</p>
-        <Button className="mt-6 bg-[#116d7b] hover:bg-[#0c5965]" onClick={() => void loadTasks()}><RefreshCw /> إعادة المحاولة</Button>
+        <Button className="mt-6 bg-[#116d7b] hover:bg-[#0c5965]" onClick={refreshTasks}><RefreshCw /> إعادة المحاولة</Button>
       </div>
     </main>
   );
@@ -319,7 +337,7 @@ export function TaskDashboard() {
               <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">خطة التنفيذ للجزء الأول - ثلاثة أشهر</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void loadTasks()}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
+          <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={refreshTasks}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
         </div>
       </header>
 

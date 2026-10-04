@@ -79,23 +79,20 @@ function createFallbackStore(): TaskStore {
 }
 
 export function createTaskStore(): TaskStore {
-  if (!hasNetlifyBlobConfig()) {
+  const isNetlifyRuntime = process.env.NETLIFY === "true" || hasNetlifyBlobConfig();
+  if (!isNetlifyRuntime) {
     return createFallbackStore();
   }
 
-  try {
-    const store = getStore(STORE_NAME, { consistency: "strong" });
-    return {
-      async getTasks() {
-        const tasks = await store.get(TASKS_KEY, { type: "json" }) as unknown;
-        if (!Array.isArray(tasks)) return [];
-        return tasks.map(normaliseTask).filter((task): task is Task => Boolean(task));
-      },
-      async setTasks(tasks: Task[]) {
-        await store.setJSON(TASKS_KEY, tasks);
-      },
-    };
-  } catch {
-    return createFallbackStore();
-  }
+  const store = getStore(STORE_NAME, { consistency: "strong" });
+  return {
+    async getTasks() {
+      const tasks = await store.get(TASKS_KEY, { type: "json" }) as unknown;
+      if (!Array.isArray(tasks)) return [];
+      return tasks.map(normaliseTask).filter((task): task is Task => Boolean(task));
+    },
+    async setTasks(tasks: Task[]) {
+      await store.setJSON(TASKS_KEY, tasks);
+    },
+  };
 }
