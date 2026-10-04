@@ -79,7 +79,9 @@ function createFallbackStore(): TaskStore {
 }
 
 export function createTaskStore(): TaskStore {
-  const isNetlifyRuntime = process.env.NETLIFY === "true" || hasNetlifyBlobConfig();
+  const isNetlifyRuntime = process.env.NETLIFY === "true" ||
+    Boolean(process.env.NETLIFY_BLOBS_CONTEXT) ||
+    hasNetlifyBlobConfig();
   if (!isNetlifyRuntime) {
     return createFallbackStore();
   }
