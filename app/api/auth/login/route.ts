@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
   const email = typeof payload.email === "string" ? payload.email : "";
   const password = typeof payload.password === "string" ? payload.password : "";
-  if (!authenticateAdmin(email, password)) {
+  if (!(await authenticateAdmin(email, password))) {
     return Response.json({ error: "البريد الإلكتروني أو كلمة المرور غير صحيحة." }, { status: 401 });
   }
 

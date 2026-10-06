@@ -22,6 +22,7 @@ import {
   Search,
   Sparkles,
   UserRound,
+  UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -155,6 +156,11 @@ export function TaskDashboard() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
+  const [adminManagerOpen, setAdminManagerOpen] = useState(false);
+  const [adminEmailInput, setAdminEmailInput] = useState("");
+  const [adminEmails, setAdminEmails] = useState<string[]>([]);
+  const [adminListLoading, setAdminListLoading] = useState(false);
+  const [adminSaving, setAdminSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
@@ -249,6 +255,42 @@ export function TaskDashboard() {
       toast.success("تم تسجيل الخروج");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر تسجيل الخروج.");
+    }
+  }
+
+  async function openAdminManager() {
+    setAdminManagerOpen(true);
+    setAdminListLoading(true);
+    try {
+      const response = await fetch("/api/auth/admins", { cache: "no-store" });
+      const data = await response.json() as { admins?: string[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "تعذر تحميل قائمة المسؤولين.");
+      setAdminEmails(data.admins ?? []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تحميل قائمة المسؤولين.");
+    } finally {
+      setAdminListLoading(false);
+    }
+  }
+
+  async function submitNewAdmin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAdminSaving(true);
+    try {
+      const response = await fetch("/api/auth/admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: adminEmailInput }),
+      });
+      const data = await response.json() as { admins?: string[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "تعذرت إضافة المسؤول.");
+      setAdminEmails(data.admins ?? []);
+      setAdminEmailInput("");
+      toast.success("تمت إضافة المسؤول. يمكنه الدخول باستخدام كلمة مرور المسؤول الحالية.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذرت إضافة المسؤول.");
+    } finally {
+      setAdminSaving(false);
     }
   }
 
@@ -407,6 +449,7 @@ export function TaskDashboard() {
           <div className="flex items-center gap-2">
             {isAdmin ? <>
               <span className="hidden max-w-40 truncate text-sm font-semibold text-emerald-700 sm:inline">{adminEmail}</span>
+              <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void openAdminManager()}><UserPlus className="size-4" /><span className="hidden sm:inline">إدارة المسؤولين</span></Button>
               <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void logoutAdmin()}><LogOut className="size-4" /><span className="hidden sm:inline">خروج المسؤول</span></Button>
             </> : <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => { setLoginError(""); setLoginOpen(true); }} disabled={authLoading}><LogIn className="size-4" /><span className="hidden sm:inline">دخول المسؤول</span></Button>}
             <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={refreshTasks}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
@@ -524,6 +567,34 @@ export function TaskDashboard() {
             {!authConfigured && <p role="alert" className="text-sm text-amber-800">دخول المسؤول غير مُعدّ على الخادم.</p>}
             <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button type="submit" className="bg-[#116d7b] hover:bg-[#0c5965]" disabled={loggingIn || !authConfigured}>{loggingIn ? <Loader2 className="animate-spin" /> : <LogIn />}دخول</Button><Button type="button" variant="outline" onClick={() => setLoginOpen(false)} disabled={loggingIn}>إلغاء</Button></DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={adminManagerOpen} onOpenChange={(open) => { if (!adminSaving) setAdminManagerOpen(open); }}>
+        <DialogContent dir="rtl" className="text-right sm:max-w-md">
+          <DialogHeader className="text-right sm:text-right">
+            <DialogTitle>إدارة المسؤولين</DialogTitle>
+            <DialogDescription>أضف بريدًا إلكترونيًا ليتمكن صاحبه من الدخول بكلمة مرور المسؤول الحالية.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <section aria-label="المسؤولون الحاليون" className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <h3 className="text-sm font-bold">المسؤولون الحاليون</h3>
+              {adminListLoading ? <p className="mt-2 text-sm text-slate-500">جارٍ تحميل القائمة...</p> : (
+                <ul className="mt-2 grid gap-2">
+                  {adminEmails.map((email) => <li key={email} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">{email}</li>)}
+                </ul>
+              )}
+            </section>
+            <form onSubmit={(event) => void submitNewAdmin(event)} className="grid gap-4">
+              <label className="grid gap-2 text-sm font-bold">البريد الإلكتروني للمسؤول الجديد
+                <Input type="email" autoComplete="off" required value={adminEmailInput} onChange={(event) => setAdminEmailInput(event.target.value)} placeholder="admin@example.com" />
+              </label>
+              <DialogFooter className="flex-row-reverse justify-start sm:justify-start">
+                <Button type="submit" className="bg-[#116d7b] hover:bg-[#0c5965]" disabled={adminSaving || adminListLoading}>{adminSaving ? <Loader2 className="animate-spin" /> : <UserPlus />}إضافة مسؤول</Button>
+                <Button type="button" variant="outline" onClick={() => setAdminManagerOpen(false)} disabled={adminSaving}>إغلاق</Button>
+              </DialogFooter>
+            </form>
+          </div>
         </DialogContent>
       </Dialog>
 

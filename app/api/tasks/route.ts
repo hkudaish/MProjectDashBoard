@@ -39,7 +39,7 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   try {
-    if (!getAdminSession(request.headers)) {
+    if (!(await getAdminSession(request.headers))) {
       return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول لتعديل البيانات." }, { status: 401 });
     }
     const payload = (await request.json()) as Record<string, unknown>;

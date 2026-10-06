@@ -1,17 +1,49 @@
+import { getStore } from "@netlify/blobs";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const COOKIE_NAME = "task_admin_session";
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
+const STORE_NAME = "wamy-task-dashboard";
+const ADMIN_EMAILS_KEY = "admin-emails";
 
 export type AdminSession = { email: string; expiresAt: number };
 
-function adminEmails() {
-  return new Set(
-    (process.env.ADMIN_EMAILS ?? "")
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean),
-  );
+export function normalizeAdminEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function configuredAdminEmails() {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map(normalizeAdminEmail)
+    .filter(Boolean);
+}
+
+async function storedAdminEmails() {
+  try {
+    const store = getStore(STORE_NAME, { consistency: "strong" });
+    const value = await store.get(ADMIN_EMAILS_KEY, { type: "json" }) as unknown;
+    if (!Array.isArray(value)) return [];
+    return value.map((email) => normalizeAdminEmail(String(email))).filter((email) => email.includes("@"));
+  } catch {
+    return [];
+  }
+}
+
+export async function getAllAdminEmails() {
+  return [...new Set([...configuredAdminEmails(), ...await storedAdminEmails()])];
+}
+
+export async function addAdminEmail(email: string) {
+  const normalizedEmail = normalizeAdminEmail(email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new Error("أدخل بريدًا إلكترونيًا صالحًا.");
+  }
+  const admins = await getAllAdminEmails();
+  const nextAdmins = [...new Set([...admins, normalizedEmail])];
+  const store = getStore(STORE_NAME, { consistency: "strong" });
+  await store.setJSON(ADMIN_EMAILS_KEY, nextAdmins);
+  return nextAdmins;
 }
 
 function sessionSecret() {
@@ -33,15 +65,15 @@ function safeEqual(left: string, right: string) {
 export function canAdminLogin() {
   return Boolean(
     process.env.ADMIN_PASSWORD &&
-      adminEmails().size > 0 &&
+      configuredAdminEmails().length > 0 &&
       sessionSecret(),
   );
 }
 
-export function authenticateAdmin(email: string, password: string) {
-  const normalizedEmail = email.trim().toLowerCase();
+export async function authenticateAdmin(email: string, password: string) {
+  const normalizedEmail = normalizeAdminEmail(email);
   const configuredPassword = process.env.ADMIN_PASSWORD ?? "";
-  if (!canAdminLogin() || !adminEmails().has(normalizedEmail)) return false;
+  if (!canAdminLogin() || !(await getAllAdminEmails()).includes(normalizedEmail)) return false;
   return safeEqual(password, configuredPassword);
 }
 
@@ -56,7 +88,7 @@ export function createAdminSessionToken(email: string) {
   return `${payload}.${sign(payload, secret)}`;
 }
 
-export function getAdminSession(headers: Headers): AdminSession | null {
+export async function getAdminSession(headers: Headers): Promise<AdminSession | null> {
   const secret = sessionSecret();
   if (!secret || !canAdminLogin()) return null;
 
@@ -78,9 +110,9 @@ export function getAdminSession(headers: Headers): AdminSession | null {
       typeof session.email !== "string" ||
       typeof session.expiresAt !== "number" ||
       session.expiresAt <= Math.floor(Date.now() / 1000) ||
-      !adminEmails().has(session.email)
+      !(await getAllAdminEmails()).includes(normalizeAdminEmail(session.email))
     ) return null;
-    return session;
+    return { ...session, email: normalizeAdminEmail(session.email) };
   } catch {
     return null;
   }
