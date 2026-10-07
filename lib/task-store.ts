@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import { taskDetailsSchema } from "./task-details";
 import type { Task, TaskStatus } from "./types";
 
 const TASKS_KEY = "tasks";
@@ -28,6 +29,7 @@ function normaliseTask(raw: unknown): Task | null {
   const updatedAt = typeof task.updatedAt === "string" ? task.updatedAt : new Date().toISOString();
   const status = isValidTaskStatus(task.status) ? task.status : "not_started";
   const progress = typeof task.progress === "number" ? Math.max(0, Math.min(100, Math.round(task.progress))) : 0;
+  const details = taskDetailsSchema.safeParse(task.details);
   const sourceOrder = typeof task.sourceOrder === "number" ? task.sourceOrder : 0;
 
   if (!id || !productId || !productName || !title || !plannedDate || !endDate) {
@@ -48,6 +50,7 @@ function normaliseTask(raw: unknown): Task | null {
     notes,
     sourceOrder,
     updatedAt,
+    ...(details.success ? { details: details.data } : {}),
   };
 }
 

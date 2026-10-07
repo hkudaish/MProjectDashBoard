@@ -36,10 +36,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
+import { TaskDetailsEditor } from "@/components/task-details-editor";
+import { taskDetailsSchema } from "@/lib/task-details";
 import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus } from "@/lib/types";
 
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
-type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate">>;
+type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details">>;
 
 const PRODUCTS = [
   { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", icon: Images, color: "#177f8f" },
@@ -386,11 +388,17 @@ export function TaskDashboard() {
   function openTask(task: Task) {
     if (!isAdmin) return;
     setEditing(task);
-    setDraft({ ...task });
+    setDraft({ ...task, details: (task.details ?? []).map((detail) => ({ ...detail })) });
   }
 
   async function saveDraft() {
     if (!draft || !editing) return;
+    if (!isAdmin) return;
+    const details = taskDetailsSchema.safeParse(draft.details ?? []);
+    if (!details.success) {
+      toast.error(details.error.issues[0]?.message || "تفاصيل المهمة غير صحيحة.");
+      return;
+    }
     setSaving(true);
     try {
       await persistTask(editing.id, {
@@ -402,6 +410,7 @@ export function TaskDashboard() {
         plannedDate: draft.plannedDate,
         endDate: draft.endDate,
         notes: draft.notes,
+        details: details.data,
       });
       setEditing(null);
       setDraft(null);
@@ -603,6 +612,7 @@ export function TaskDashboard() {
           <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">تحديث المهمة</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
           {draft && <div className="grid gap-5 py-2">
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
+            {isAdmin && <TaskDetailsEditor details={draft.details ?? []} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />}
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: value === "completed" ? 100 : value === "not_started" ? 0 : draft.progress })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
               <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>

@@ -2,6 +2,7 @@ import { DEFAULT_TASKS } from "@/lib/task-data";
 import { createTaskStore } from "@/lib/task-store";
 import { getAdminSession } from "@/lib/admin-auth";
 import type { Task } from "@/lib/types";
+import { taskDetailsSchema } from "@/lib/task-details";
 
 const VALID_STATUSES = new Set(["not_started", "in_progress", "review", "completed", "blocked"]);
 const VALID_OWNERS = new Set(["wamy", "vendor", "joint", "unassigned"]);
@@ -47,6 +48,14 @@ export async function PATCH(request: Request) {
     if (!id) return Response.json({ error: "معرّف المهمة مطلوب." }, { status: 400 });
 
     const update: Partial<Task> = { updatedAt: new Date().toISOString() };
+
+    if ("details" in payload) {
+      const details = taskDetailsSchema.safeParse(payload.details);
+      if (!details.success) {
+        return Response.json({ error: details.error.issues[0]?.message || "تفاصيل المهمة غير صحيحة." }, { status: 400 });
+      }
+      update.details = details.data;
+    }
 
     if (typeof payload.status === "string") {
       if (!VALID_STATUSES.has(payload.status)) return Response.json({ error: "حالة المهمة غير صحيحة." }, { status: 400 });

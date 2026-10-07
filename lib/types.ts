@@ -1,10 +1,20 @@
 export type TaskStatus = "not_started" | "in_progress" | "review" | "completed" | "blocked";
 
+export type TaskDetail = {
+  id: string;
+  description: string;
+  status: TaskStatus;
+  completionDate: string;
+  ownerType: string;
+  assignee: string;
+};
+
 export type Task = {
   id: string;
   productId: string;
   productName: string;
   title: string;
+  details?: TaskDetail[];
   plannedDate: string;
   endDate: string;
   ownerType: string;
