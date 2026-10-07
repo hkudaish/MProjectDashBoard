@@ -130,7 +130,12 @@ export function hasSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   try {
-    return new URL(origin).origin === new URL(request.url).origin;
+    const requestOrigin = new URL(origin).origin;
+    if (requestOrigin === new URL(request.url).origin) return true;
+    // Netlify may rewrite request.url to a branch alias. URL is the trusted
+    // main site address supplied to functions by the hosting platform.
+    const siteUrl = process.env.URL;
+    return Boolean(siteUrl && requestOrigin === new URL(siteUrl).origin);
   } catch {
     return false;
   }
