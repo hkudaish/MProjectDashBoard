@@ -19,7 +19,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
   const users = await listUsers();
   const systemAdmin = actor.position === "system_admin";
   const managerial = isManager(actor.position);
-  if (!previous && !managerial) throw new TaskPolicyError("إنشاء المهام متاح للمسؤولين فقط.");
+  if (!previous && !managerial && !systemAdmin) throw new TaskPolicyError("إنشاء المهام متاح للمسؤولين فقط.");
   const permissions = previous ? taskPermissions(actor, previous, users) : { canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] };
   if (!permissions.canEdit) throw new TaskPolicyError("لا تملك صلاحية تعديل هذه المهمة.");
   if (previous && !permissions.canEditMain) {

@@ -60,14 +60,21 @@ async function adminCookie() {
   const changed = await password.POST(request({ currentPassword: oldPassword, newPassword: personalPassword }, cookie(first)));
   assert.equal(changed.status, 200); return cookie(changed);
 }
+let leaderSetup;
+async function ensureLeader(admin) {
+  leaderSetup ??= positioned(admin, "leader@example.com", "secretary_general", null, null);
+  await leaderSetup;
+}
 async function newUser(admin, email, role = "editor") {
-  const position = email === "test-manager@example.com" ? "department_manager" : role === "admin" ? "system_admin" : role === "editor" ? "project_manager" : "employee";
+  await ensureLeader(admin);
+  const position = email === "test-manager@example.com" ? "section_head" : role === "admin" ? "system_admin" : role === "editor" ? "project_manager" : "employee";
+  if (position === "section_head" && !await accounts.findAccount("test-department@example.com")) await positioned(admin, "test-department@example.com", "department_manager", "leader@example.com");
   if (position === "employee" && !await accounts.findAccount("test-manager@example.com")) await newUser(admin, "test-manager@example.com");
-  const response = await users.POST(request({ email, name: "User", position, managerEmail: position === "system_admin" ? null : position === "employee" ? "test-manager@example.com" : "admin@example.com", entityId: position === "system_admin" ? null : "wamy", password: temporaryPassword }, admin));
+  const response = await users.POST(request({ email, name: "User", position, managerEmail: position === "system_admin" ? null : position === "employee" ? "test-manager@example.com" : position === "section_head" ? "test-department@example.com" : "leader@example.com", password: temporaryPassword }, admin));
   assert.equal(response.status, 201, await response.clone().text()); return response;
 }
 beforeEach(() => {
-  data.clear(); revision = 0; writes = 0;
+  data.clear(); revision = 0; writes = 0; leaderSetup = undefined;
   process.env.NODE_ENV = "production"; delete process.env.TASK_STORE_MODE;
   process.env.ADMIN_EMAILS = "admin@example.com,other@example.com";
   process.env.ADMIN_PASSWORD = oldPassword;
@@ -78,7 +85,7 @@ beforeEach(() => {
 
 test("legacy accounts keep existing credentials, migrate once to salted hashes, and require first-login change", async () => {
   const listed = await accounts.listUsers(); assert.equal(listed.length, 3);
-  assert.ok(listed.every((u) => u.role === "admin" && u.mustChangePassword));
+  assert.ok(listed.every((u) => u.role === "admin" && u.name === "مدير النظام" && u.mustChangePassword));
   const records = data.get("user-accounts-v1").value;
   assert.equal(new Set(records.map((u) => u.passwordHash)).size, 3);
   for (const user of records) assert.equal(await accounts.verifyPassword(oldPassword, user.passwordHash), true);
@@ -203,6 +210,7 @@ test("concurrent account creation does not overwrite another user's account", as
 const directory = await exports("app/api/users/directory/route.ts");
 const entities = await exports("app/api/entities/route.ts");
 async function positioned(admin, email, position, managerEmail, entityId = "wamy") {
+  if (["department_manager", "project_manager"].includes(position) && managerEmail === "admin@example.com") { await ensureLeader(admin); managerEmail = "leader@example.com"; }
   const response = await users.POST(request({ email, name: email, position, managerEmail, entityId, password: temporaryPassword }, admin));
   assert.equal(response.status, 201, await response.clone().text()); return (await response.json()).user;
 }
@@ -216,7 +224,8 @@ async function tree(admin) {
   await positioned(admin, "section@example.com", "section_head", "department@example.com");
   await positioned(admin, "staff@example.com", "employee", "section@example.com");
   await positioned(admin, "outside@example.com", "department_manager", "admin@example.com");
-  await positioned(admin, "otherstaff@example.com", "employee", "outside@example.com");
+  await positioned(admin, "outsidesection@example.com", "section_head", "outside@example.com");
+  await positioned(admin, "otherstaff@example.com", "employee", "outsidesection@example.com");
 }
 test("hierarchy requires valid positions, supervisors and entities and protects dependent users", async () => {
   const admin = await adminCookie(); await tree(admin);
@@ -260,7 +269,8 @@ test("detail assignments preserve protected rows and scope follows administrativ
   const admin = await adminCookie(); await tree(admin);
   const manager = await personalCookie("department@example.com");
   const row = (id, email) => ({ id, description: id, status: "not_started", completionDate: "", ownerType: "wamy", assignee: "", assigneeEmail: email });
-  const created = await tasks.POST(request({ ...seed, assigneeEmail: "section@example.com", details: [row("own", "staff@example.com"), row("protected", "otherstaff@example.com")] }, admin));
+  const leader = await personalCookie("leader@example.com");
+  const created = await tasks.POST(request({ ...seed, assigneeEmail: "section@example.com", details: [row("own", "staff@example.com"), row("protected", "otherstaff@example.com")] }, leader));
   assert.equal(created.status, 201); const task = (await created.json()).task;
   assert.equal((await tasks.PATCH(request({ id: task.id, details: task.details.map((detail) => detail.id === "protected" ? { ...detail, status: "completed" } : detail) }, manager, "PATCH"))).status, 403);
   assert.equal((await tasks.PATCH(request({ id: task.id, details: [task.details[0]] }, manager, "PATCH"))).status, 403);
@@ -310,7 +320,8 @@ test("changing login email preserves assignments, reporting links and passwords,
   const admin = await adminCookie(); await tree(admin);
   const managerCookie = await personalCookie("department@example.com");
   const before = await accounts.findAccount("department@example.com");
-  const created = await tasks.POST(request({ ...seed, title: "History", assigneeEmail: "department@example.com", assignee: "" }, admin)); assert.equal(created.status, 201); const task = (await created.json()).task;
+  const leader = await personalCookie("leader@example.com");
+  const created = await tasks.POST(request({ ...seed, title: "History", assigneeEmail: "department@example.com", assignee: "" }, leader)); assert.equal(created.status, 201); const task = (await created.json()).task;
   const renamed = await users.PATCH(request({ email: "department@example.com", newEmail: "RENAMED@example.com", name: "Renamed Manager" }, admin, "PATCH")); assert.equal(renamed.status, 200);
   const after = await accounts.findAccount("department@example.com"); assert.equal(after.passwordHash, before.passwordHash); assert.equal(after.loginEmail, "renamed@example.com");
   assert.equal((await accounts.findAccount("section@example.com")).managerEmail, "department@example.com");
@@ -333,7 +344,8 @@ test("system director can change their login email without being locked out", as
 test("account deletion removes login access while preserving task history and preventing identity reuse", async () => {
   const admin = await adminCookie(); await tree(admin); const staffCookie=await personalCookie("staff@example.com");
   const row={id:"historical-row",description:"Historical detail",status:"review",completionDate:"",ownerType:"wamy",assignee:"",assigneeEmail:"staff@example.com"};
-  const created=await tasks.POST(request({...seed,assignee:"",assigneeEmail:"staff@example.com",details:[row]},admin));assert.equal(created.status,201);const task=(await created.json()).task;
+  const leader=await personalCookie("leader@example.com");
+  const created=await tasks.POST(request({...seed,assignee:"",assigneeEmail:"staff@example.com",details:[row]},leader));assert.equal(created.status,201);const task=(await created.json()).task;
   const storedBefore=structuredClone(data.get("tasks").value);
   assert.equal((await users.DELETE(request({email:"staff@example.com"},admin,"DELETE"))).status,200);
   assert.equal(await auth.getUserSession(new Headers({cookie:staffCookie})),null);
@@ -355,20 +367,15 @@ test("account deletion protects supervisors and self and is restricted to the sy
 });
 
 const hierarchy = await exports("lib/hierarchy.ts");
-test("employees report to section heads or departments, with the complete chain shown in order", async () => {
+test("employees report only to section heads and the system administrator is excluded from the chain", async () => {
   const admin=await adminCookie();await tree(admin);
   await positioned(admin,"project@example.com","project_manager","admin@example.com");
   const listed=await accounts.listUsers();
-  const options=hierarchy.managerOptions(listed,"employee");
-  assert.ok(options.some(user=>user.email==="section@example.com"));assert.ok(options.some(user=>user.email==="department@example.com"));
-  assert.ok(!options.some(user=>user.position==="project_manager"||user.position==="system_admin"||user.position==="employee"));
-  assert.deepEqual(hierarchy.supervisorChain(listed,"section@example.com").map(user=>user.position),["system_admin","department_manager","section_head"]);
-  assert.equal((await users.POST(request({email:"invalidstaff@example.com",name:"Invalid",position:"employee",managerEmail:"project@example.com",entityId:"wamy",password:temporaryPassword},admin))).status,400);
-  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"project@example.com"},admin,"PATCH"))).status,400);
-  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"department@example.com"},admin,"PATCH"))).status,200);
-  const current=await accounts.listUsers();assert.deepEqual(hierarchy.supervisorChain(current,(await accounts.findAccount("staff@example.com")).managerEmail).map(user=>user.position),["system_admin","department_manager"]);
-  assert.ok(hierarchy.subordinateUsers(current,"department@example.com").some(user=>user.email==="staff@example.com"));
-  assert.ok(!hierarchy.subordinateUsers(current,"section@example.com").some(user=>user.email==="staff@example.com"));
+  assert.ok(hierarchy.managerOptions(listed,"employee").every(user=>user.position==="section_head"));
+  assert.deepEqual(hierarchy.supervisorChain(listed,"section@example.com").map(user=>user.position),["secretary_general","department_manager","section_head"]);
+  for (const managerEmail of ["project@example.com", "department@example.com", "admin@example.com", "staff@example.com"])
+    assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail},admin,"PATCH"))).status,400);
+  assert.deepEqual(hierarchy.subordinateUsers(listed,"admin@example.com"),[]);
 });
 test("legacy employee/project links are repairable without granting project managers assignment scope", async () => {
   const admin=await adminCookie();await tree(admin);await positioned(admin,"project@example.com","project_manager","admin@example.com");
@@ -383,43 +390,40 @@ test("legacy employee/project links are repairable without granting project mana
   assert.equal((await accounts.findAccount("staff@example.com")).passwordHash,previousHash);
 });
 
-test("employee dual reporting grants both administrative branches scope and removing the extra link revokes it", async () => {
-  const admin=await adminCookie();await tree(admin);const outside=await personalCookie("outside@example.com");
-  const updated=await users.PATCH(request({email:"staff@example.com",managerPosition:"both",additionalManagerEmail:"outside@example.com"},admin,"PATCH"));assert.equal(updated.status,200);assert.equal((await updated.json()).user.additionalManagerEmail,"outside@example.com");
-  const directoryData=await(await directory.GET(request(null,outside,"GET"))).json();assert.ok(directoryData.assignableUsers.some(user=>user.email==="staff@example.com"));assert.ok(!directoryData.assignableUsers.some(user=>user.email==="section@example.com"));
-  const created=await tasks.POST(request({...seed,title:"Dual assignment",assignee:"",assigneeEmail:"staff@example.com"},outside));assert.equal(created.status,201);const task=(await created.json()).task;
-  assert.equal((await users.PATCH(request({email:"outside@example.com",active:false},admin,"PATCH"))).status,400);
-  assert.equal((await users.DELETE(request({email:"outside@example.com"},admin,"DELETE"))).status,400);
-  assert.equal((await users.PATCH(request({email:"staff@example.com",managerPosition:"section_head",additionalManagerEmail:null},admin,"PATCH"))).status,200);
-  assert.ok(!(await(await directory.GET(request(null,outside,"GET"))).json()).assignableUsers.some(user=>user.email==="staff@example.com"));
-  assert.equal((await tasks.PATCH(request({id:task.id,status:"completed"},outside,"PATCH"))).status,403);
-  assert.ok(hierarchy.subordinateUsers(await accounts.listUsers(),"department@example.com").some(user=>user.email==="staff@example.com"));
-});
-test("dual reporting requires a section head and a department manager and cannot be forged for other positions", async () => {
+test("legacy dual reporting stays repairable and grants no additional assignment scope", async () => {
   const admin=await adminCookie();await tree(admin);
-  for(const changes of [
-    {email:"staff@example.com",managerPosition:"both",additionalManagerEmail:null},
-    {email:"staff@example.com",additionalManagerEmail:"section@example.com"},
-    {email:"staff@example.com",managerPosition:"department_manager"},
-    {email:"staff@example.com",managerEmail:"department@example.com",additionalManagerEmail:"outside@example.com"},
-    {email:"section@example.com",additionalManagerEmail:"outside@example.com"},
-    {email:"admin@example.com",additionalManagerEmail:"outside@example.com"}
-  ])assert.equal((await users.PATCH(request(changes,admin,"PATCH"))).status,400);
-  const created=await users.POST(request({email:"dual@example.com",name:"Dual Employee",position:"employee",managerPosition:"both",managerEmail:"section@example.com",additionalManagerEmail:"outside@example.com",entityId:"wamy",password:temporaryPassword},admin));assert.equal(created.status,201);
-  assert.equal((await users.POST(request({email:"incomplete@example.com",name:"Incomplete",position:"employee",managerPosition:"both",managerEmail:"section@example.com",entityId:"wamy",password:temporaryPassword},admin))).status,400);
-  assert.equal((await users.PATCH(request({email:"dual@example.com",position:"section_head",managerEmail:"department@example.com"},admin,"PATCH"))).status,400);
-  assert.equal((await users.PATCH(request({email:"dual@example.com",position:"section_head",managerEmail:"department@example.com",additionalManagerEmail:null},admin,"PATCH"))).status,200);
+  const before=await accounts.findAccount("staff@example.com");
+  const rows=data.get("user-accounts-v1").value;
+  rows.find(user=>user.email==="staff@example.com").additionalManagerEmail="outside@example.com";
+  data.set("user-accounts-v1",{etag:"old-dual-reporting",value:rows});
+  assert.ok(!hierarchy.subordinateUsers(await accounts.listUsers(),"outside@example.com").some(user=>user.email==="staff@example.com"));
+  await positioned(admin,"newdepartment@example.com","department_manager","admin@example.com");
+  assert.equal((await users.PATCH(request({email:"staff@example.com",additionalManagerEmail:null},admin,"PATCH"))).status,200);
+  assert.equal((await accounts.findAccount("staff@example.com")).passwordHash,before.passwordHash);
 });
-
+test("new accounts require a single eligible supervisor and reject dual reporting", async () => {
+  const admin=await adminCookie();await tree(admin);
+  for (const changes of [
+    {email:"staff@example.com",managerPosition:"both"},
+    {email:"staff@example.com",additionalManagerEmail:"outside@example.com"},
+    {email:"staff@example.com",managerPosition:"department_manager"},
+    {email:"section@example.com",managerEmail:"leader@example.com"},
+    {email:"admin@example.com",additionalManagerEmail:"outside@example.com"},
+  ]) assert.equal((await users.PATCH(request(changes,admin,"PATCH"))).status,400);
+  assert.equal((await users.POST(request({email:"newstaff@example.com",name:"Staff",position:"employee",managerEmail:"section@example.com",password:temporaryPassword},admin))).status,201);
+});
 test("task assignment lists exclude system directors and remain scoped to registered reporting relationships", async () => {
   const admin=await adminCookie();await tree(admin);
   await positioned(admin,"project@example.com","project_manager","admin@example.com");
-  await positioned(admin,"otherdepartment@example.com","department_manager","other@example.com");
+  await positioned(admin,"otherleader@example.com","secretary_general",null,null);
+  await positioned(admin,"otherdepartment@example.com","department_manager","otherleader@example.com");
   const rootDirectory=await(await directory.GET(request(null,admin,"GET"))).json();
-  assert.ok(rootDirectory.assignableUsers.some(user=>user.email==="project@example.com"));
-  assert.ok(rootDirectory.assignableUsers.some(user=>user.email==="staff@example.com"));
-  assert.ok(rootDirectory.assignableUsers.every(user=>user.position!=="system_admin"));
-  assert.ok(!rootDirectory.assignableUsers.some(user=>user.email==="otherdepartment@example.com"));
+  assert.deepEqual(rootDirectory.assignableUsers,[]);
+  const leader=await personalCookie("leader@example.com");
+  const leadershipDirectory=await(await directory.GET(request(null,leader,"GET"))).json();
+  assert.ok(leadershipDirectory.assignableUsers.some(user=>user.email==="project@example.com"));
+  assert.ok(leadershipDirectory.assignableUsers.some(user=>user.email==="staff@example.com"));
+  assert.ok(!leadershipDirectory.assignableUsers.some(user=>user.email==="otherdepartment@example.com"));
   const department=await personalCookie("department@example.com");const section=await personalCookie("section@example.com");const project=await personalCookie("project@example.com");const employee=await personalCookie("staff@example.com");
   assert.deepEqual((await(await directory.GET(request(null,department,"GET"))).json()).assignableUsers.map(user=>user.email).sort(),["section@example.com","staff@example.com"]);
   assert.deepEqual((await(await directory.GET(request(null,section,"GET"))).json()).assignableUsers.map(user=>user.email),["staff@example.com"]);
@@ -433,7 +437,8 @@ test("system directors cannot be selected as task or detail assignees even throu
   for(const email of ["admin@example.com","other@example.com"])assert.equal((await tasks.POST(request({...seed,assigneeEmail:email,assignee:""},admin))).status,403);
   assert.equal((await tasks.POST(request({...seed,details:[row]},admin))).status,403);
   assert.equal((await products.POST(request({name:"Root assigned product",details:[row]},admin))).status,403);
-  const created=await tasks.POST(request({...seed,assigneeEmail:"staff@example.com",assignee:""},admin));assert.equal(created.status,201);const task=(await created.json()).task;
+  const leader=await personalCookie("leader@example.com");
+  const created=await tasks.POST(request({...seed,assigneeEmail:"staff@example.com",assignee:""},leader));assert.equal(created.status,201);const task=(await created.json()).task;
   assert.equal((await tasks.PATCH(request({id:task.id,assigneeEmail:"admin@example.com",assignee:""},admin,"PATCH"))).status,403);
   assert.equal((await tasks.PATCH(request({id:task.id,details:[row]},admin,"PATCH"))).status,403);
   assert.equal(data.get("tasks").value.find(item=>item.id===task.id).assigneeEmail,"staff@example.com");
@@ -445,4 +450,43 @@ test("the task assignee is independent of the user's administrative supervisor",
   assert.equal(task.assigneeEmail,"staff@example.com");assert.notEqual(task.assigneeEmail,before.managerEmail);
   assert.equal((await accounts.findAccount("staff@example.com")).managerEmail,before.managerEmail);
   assert.equal((await tasks.PATCH(request({id:task.id,assigneeEmail:"department@example.com",assignee:""},section,"PATCH"))).status,403);
+});
+
+test("leadership positions and administrative reporting are enforced in the API", async () => {
+  const admin=await adminCookie();await ensureLeader(admin);
+  await positioned(admin,"assistant@example.com","assistant_secretary_general","leader@example.com",null);
+  await positioned(admin,"executive@example.com","executive_assistant","leader@example.com",null);
+  await positioned(admin,"department@example.com","department_manager","assistant@example.com",null);
+  await positioned(admin,"project@example.com","project_manager","executive@example.com",null);
+  await positioned(admin,"section@example.com","section_head","department@example.com",null);
+  await positioned(admin,"staff@example.com","employee","section@example.com",null);
+  const listed=await accounts.listUsers();
+  assert.deepEqual(hierarchy.managerOptions(listed,"department_manager").map(user=>user.position).sort(),["assistant_secretary_general","executive_assistant","secretary_general"].sort());
+  assert.deepEqual(hierarchy.supervisorChain(listed,"section@example.com").map(user=>user.position),["secretary_general","assistant_secretary_general","department_manager","section_head"]);
+  const assistant=await personalCookie("assistant@example.com");
+  const created=await tasks.POST(request({...seed,assigneeEmail:"staff@example.com",assignee:""},assistant));assert.equal(created.status,201);
+  assert.equal((await tasks.POST(request({...seed,assigneeEmail:"project@example.com",assignee:""},assistant))).status,403);
+  for (const fields of [
+    {position:"secretary_general",managerEmail:"admin@example.com"},
+    {position:"assistant_secretary_general",managerEmail:"executive@example.com"},
+    {position:"executive_assistant",managerEmail:"assistant@example.com"},
+    {position:"section_head",managerEmail:"project@example.com"},
+    {position:"employee",managerEmail:"department@example.com"},
+  ]) assert.equal((await users.POST(request({email:"invalid@example.com",name:"Invalid",password:temporaryPassword,...fields},admin))).status,400);
+});
+
+test("administrative reporting is optional on creation and can be linked or cleared later", async () => {
+  const admin=await adminCookie();
+  for (const position of ["assistant_secretary_general", "executive_assistant", "department_manager", "project_manager", "section_head", "employee"]) {
+    const response=await users.POST(request({email:`unlinked-${position}@example.com`,name:position,position,password:temporaryPassword,managerPosition:position === "employee" ? "section_head" : undefined},admin));
+    assert.equal(response.status,201,await response.clone().text());
+    assert.equal((await response.json()).user.managerEmail,null);
+  }
+  await tree(admin);
+  const department=await personalCookie("department@example.com");
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:null,managerPosition:"section_head"},admin,"PATCH"))).status,200);
+  assert.ok(!(await(await directory.GET(request(null,department,"GET"))).json()).assignableUsers.some(user=>user.email==="staff@example.com"));
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"department@example.com"},admin,"PATCH"))).status,400);
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"section@example.com"},admin,"PATCH"))).status,200);
+  assert.ok((await(await directory.GET(request(null,department,"GET"))).json()).assignableUsers.some(user=>user.email==="staff@example.com"));
 });

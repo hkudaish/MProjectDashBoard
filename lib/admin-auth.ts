@@ -45,7 +45,7 @@ export async function getUserSession(headers: Headers): Promise<UserSession | nu
 // Existing task/product endpoints use this guard; temporary-password sessions cannot mutate data.
 export async function getAdminSession(headers: Headers): Promise<AdminSession | null> {
   const session = await getUserSession(headers);
-  return session && !session.mustChangePassword && isManager(session.position) ? session : null;
+  return session && !session.mustChangePassword && (session.position === "system_admin" || isManager(session.position)) ? session : null;
 }
 export async function getSystemAdminSession(headers: Headers) {
   const session = await getAdminSession(headers);

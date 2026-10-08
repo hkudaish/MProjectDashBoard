@@ -4,20 +4,20 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { getAllAdminEmails, normalizeAdminEmail } from "./legacy-admins";
 import { createEntityStore } from "./entity-store";
-import { MANAGER_POSITIONS, type Position } from "./user-types";
+import { MANAGER_POSITIONS, POSITIONS, type Position } from "./user-types";
 import type { PublicUser } from "./user-types";
 
 const deriveKey = promisify(scrypt);
 const KEY = "user-accounts-v1";
 export const passwordSchema = z.string().min(10, "كلمة المرور يجب أن تحتوي على 10 أحرف على الأقل.").max(128, "كلمة المرور طويلة جدًا.").refine((v) => v.trim().length >= 10, "كلمة المرور يجب ألا تتكون من مسافات.");
 export const emailSchema = z.string().trim().email("أدخل بريدًا إلكترونيًا صالحًا.").max(254).transform(normalizeAdminEmail);
-export const positionSchema = z.enum(["system_admin", "project_manager", "department_manager", "section_head", "employee"]);
+export const positionSchema = z.enum(Object.keys(POSITIONS) as [Position, ...Position[]]);
 const managerLink = emailSchema.or(z.literal("")).nullable().transform((value) => value || null);
-const reportingSelection = z.enum(["section_head", "department_manager", "both"]);
+const reportingSelection = positionSchema;
 const entityLink = z.string().trim().max(120).nullable().transform((value) => value || null);
 export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), password: passwordSchema });
 export const updateUserSchema = z.object({ email: emailSchema, newEmail: emailSchema.optional(), name: z.string().trim().min(1).max(120).optional(), position: positionSchema.optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), managerPosition: reportingSelection.optional(), entityId: entityLink.optional(), active: z.boolean().optional(), temporaryPassword: passwordSchema.optional() }).strict().refine((value) => Object.keys(value).some((key) => key !== "email"), "اختر التعديل المطلوب.");
-export const HIERARCHY_ERRORS = ["حدد المنصب والمسؤول المباشر والجهة.", "مدير النظام مستقل ولا يرتبط بمسؤول مباشر أو جهة.", "المسؤول المباشر غير متوافق مع الهيكل الإداري.", "لا يمكن ربط المستخدم بنفسه أو تكوين ارتباط إداري دائري.", "الجهة المحددة غير متاحة للاختيار.", "تعديل المنصب أو تعطيل المسؤول يتعارض مع ارتباطات مستخدمين تابعين له. عدّل ارتباطاتهم أولًا."];
+export const HIERARCHY_ERRORS = ["حدد المنصب والمسؤول المباشر.", "مدير النظام مستقل ولا يرتبط بمسؤول مباشر أو جهة.", "المسؤول المباشر غير متوافق مع الهيكل الإداري.", "لا يمكن ربط المستخدم بنفسه أو تكوين ارتباط إداري دائري.", "الجهة المحددة غير متاحة للاختيار.", "تعديل المنصب أو تعطيل المسؤول يتعارض مع ارتباطات مستخدمين تابعين له. عدّل ارتباطاتهم أولًا."];
 export const ACCOUNT_ERRORS = ["يوجد حساب بهذا البريد الإلكتروني بالفعل.", "لا يمكنك حذف حسابك الحالي.", "الحساب مرتبط بمستخدمين تابعين. عدّل ارتباطاتهم قبل الحذف."];
 const accountSchema = z.object({
   loginEmail: emailSchema.optional(), deleted: z.boolean().optional(),
@@ -72,7 +72,7 @@ async function registry() {
   const password = process.env.ADMIN_PASSWORD;
   if (!password || !emails.length) throw new Error("User accounts are not configured");
   const accounts = await Promise.all(emails.map(async (email): Promise<Account> => ({
-    email, loginEmail: email, name: email, role: "admin", position: "system_admin", managerEmail: null, additionalManagerEmail: null, entityId: null, active: true, passwordHash: await hashPassword(password),
+    email, loginEmail: email, name: "مدير النظام", role: "admin", position: "system_admin", managerEmail: null, additionalManagerEmail: null, entityId: null, active: true, passwordHash: await hashPassword(password),
     mustChangePassword: true, sessionVersion: 0, resetRequestedAt: null, failedAttempts: 0, lockedUntil: 0,
   })));
   await commit(accounts);
@@ -122,21 +122,22 @@ async function validateHierarchy(accounts: Account[], changedEmail: string, prev
     if (account.deleted) continue;
     if (!account.position) { if (account.email === changedEmail && account.active) throw new Error(HIERARCHY_ERRORS[0]); continue; }
     if (account.position === "system_admin") { if (account.managerEmail || account.additionalManagerEmail || account.entityId) throw new Error(HIERARCHY_ERRORS[1]); continue; }
-    if (account.additionalManagerEmail) {
-      const additional = accounts.find((user) => user.email === account.additionalManagerEmail && !user.deleted);
-      const primary = accounts.find((user) => user.email === account.managerEmail && !user.deleted);
-      if (account.position !== "employee" || primary?.position !== "section_head" || additional?.position !== "department_manager" || account.active && !additional.active) throw new Error(account.email === changedEmail ? HIERARCHY_ERRORS[2] : HIERARCHY_ERRORS[5]);
-    }
-    if (account.email === changedEmail && selection) {
-      const primary = accounts.find((user) => user.email === account.managerEmail && !user.deleted);
-      if (account.position !== "employee" || primary?.position !== (selection === "both" ? "section_head" : selection) || (selection === "both" ? !account.additionalManagerEmail : Boolean(account.additionalManagerEmail))) throw new Error(HIERARCHY_ERRORS[2]);
-    }
-    if (!account.managerEmail || !account.entityId) throw new Error(HIERARCHY_ERRORS[0]);
+    const isChanged = account.email === changedEmail;
+    const requiredManagers = MANAGER_POSITIONS[account.position];
     const manager = accounts.find((candidate) => candidate.email === account.managerEmail && !candidate.deleted);
-    // Legacy employee/project links remain visible for repair without blocking unrelated users.
-    const legacyLink = account.email !== changedEmail && account.position === "employee" && manager?.position === "project_manager" && (!account.active || manager.active) && (manager.email !== changedEmail || previous?.position === manager.position && previous.active === manager.active);
-    if (!legacyLink && (!manager || !manager.position || (account.active && !manager.active) || !MANAGER_POSITIONS[account.position].includes(manager.position))) throw new Error(account.email === changedEmail ? HIERARCHY_ERRORS[2] : HIERARCHY_ERRORS[5]);
-    if (!entities.some((entity) => entity.id === account.entityId && !entity.deleted && (!entity.hidden || account.email !== changedEmail || previous?.entityId === account.entityId))) throw new Error(HIERARCHY_ERRORS[4]);
+    const validManager = requiredManagers.length === 0
+      ? !account.managerEmail
+      : !account.managerEmail || Boolean(manager?.position && requiredManagers.includes(manager.position) && (!account.active || manager.active));
+    const valid = validManager && !account.additionalManagerEmail;
+    if (!valid) {
+      // Preserve old reporting data for repair, without granting assignment rights.
+      // A change must not invalidate a previously valid subordinate relationship.
+      const previouslyValid = previous?.email === account.managerEmail && previous.position && requiredManagers.includes(previous.position) && (!account.active || previous.active) && !account.additionalManagerEmail;
+      if (isChanged || previouslyValid) throw new Error(isChanged ? HIERARCHY_ERRORS[2] : HIERARCHY_ERRORS[5]);
+      continue;
+    }
+    if (isChanged && account.managerEmail && selection && manager?.position !== selection) throw new Error(HIERARCHY_ERRORS[2]);
+    if (account.entityId && !entities.some((entity) => entity.id === account.entityId && !entity.deleted && (!entity.hidden || !isChanged || previous?.entityId === account.entityId))) throw new Error(HIERARCHY_ERRORS[4]);
     const visited = new Set([account.email]); let supervisor: Account | undefined = manager;
     while (supervisor) { if (visited.has(supervisor.email)) throw new Error(HIERARCHY_ERRORS[3]); visited.add(supervisor.email); supervisor = accounts.find((candidate) => candidate.email === supervisor?.managerEmail); }
   }
