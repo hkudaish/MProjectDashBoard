@@ -14,10 +14,12 @@ let reads = 0;
 let writes = 0;
 const seed = { id: "existing", productId: "digital", productName: "المحتوى الرقمي", title: "المهمة الحالية", plannedDate: "2026-10-01", endDate: "2026-10-08", status: "completed", progress: 100, ownerType: "wamy", assignee: "", notes: "", sourceOrder: 1, updatedAt: "2026-10-01" };
 const stubs = {
+  "@/lib/task-assignment": { normalizeTaskAssignments: async (actor, task) => task, normalizeProductDetails: async (actor, details) => details, taskPermissions: () => ({ canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] }), TaskPolicyError: class extends Error {} },
+  "@/lib/user-accounts": { listUsers: async () => [] },
   "zod": { z: createRequire(import.meta.url)("zod").z },
   "@netlify/blobs": { getStore: () => ({ async get(key) { reads++; return structuredClone(records.get(key)); }, async setJSON(key, value) { writes++; records.set(key, structuredClone(value)); } }) },
-  "@/lib/admin-auth": { getAdminSession: async () => admin ? { email: "admin@example.com", role } : null,
-    getSystemAdminSession: async () => admin && role === "admin" ? { email: "admin@example.com", role } : null,
+  "@/lib/admin-auth": { getUserSession: async () => admin ? { email: "admin@example.com", position: "system_admin" } : null, getAdminSession: async () => admin ? { email: "admin@example.com", role, position: role === "admin" ? "system_admin" : "project_manager" } : null,
+    getSystemAdminSession: async () => admin && role === "admin" ? { email: "admin@example.com", role, position: role === "admin" ? "system_admin" : "project_manager" } : null,
     hasSameOrigin: (request) => request.headers.get("origin") === "https://example.com" },
   "@/lib/task-data": { DEFAULT_TASKS: [seed] },
 };

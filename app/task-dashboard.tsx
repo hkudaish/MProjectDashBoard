@@ -20,10 +20,10 @@ import {
   Pencil,
   Plus,
   KeyRound,
+  Building2,
   RefreshCw,
   Search,
   Sparkles,
-  UserRound,
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,10 +38,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
+import { EntityManager } from "@/components/entity-manager";
+import { TaskAssigneeSelect } from "@/components/task-assignee-select";
 import { UserAccountManager } from "@/components/user-account-manager";
 import { PasswordChangeDialog, PasswordResetRequestDialog } from "@/components/password-dialogs";
 import { DEFAULT_PROJECT, projectInputSchema } from "@/lib/projects";
-import { USER_ROLES, type SessionInfo } from "@/lib/user-types";
+import { POSITIONS, type Entity, type PublicUser, type SessionInfo } from "@/lib/user-types";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
 import { TaskDetailsReport } from "@/components/task-details-report";
 import { DEFAULT_PRODUCTS, DEFAULT_PROJECT_ID, productInputSchema, taskInputSchema } from "@/lib/products";
@@ -51,7 +53,7 @@ import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus, type Product, type Project } from "@/lib/types";
 
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
-type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details">>;
+type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details" | "assigneeEmail">>;
 
 const PRODUCT_ICONS = [
   { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", icon: Images },
@@ -61,7 +63,6 @@ const PRODUCT_ICONS = [
 ];
 
 const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as [TaskStatus, string][];
-const OWNER_OPTIONS = Object.entries(OWNER_LABELS);
 
 function parseDate(value: string) {
   return new Date(`${value}T00:00:00`);
@@ -111,6 +112,13 @@ async function requestProjects(): Promise<Project[]> {
   const data = await response.json() as { projects: Project[]; error?: string };
   if (!response.ok) throw new Error(data.error || "تعذر تحميل المشاريع.");
   return data.projects;
+}
+
+async function requestEntities(): Promise<Entity[]> {
+  const response = await fetch("/api/entities", { cache: "no-store" });
+  const data = await response.json() as { entities: Entity[]; error?: string };
+  if (!response.ok) throw new Error(data.error || "تعذر تحميل الجهات.");
+  return data.entities;
 }
 
 function dateRange(task: Task) {
@@ -185,6 +193,9 @@ function LoadingView() {
 
 export function TaskDashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [assignmentUsers, setAssignmentUsers] = useState<PublicUser[]>([]);
+  const [entitiesOpen, setEntitiesOpen] = useState(false);
   const [products, setProducts] = useState<Product[]>(DEFAULT_PRODUCTS);
   const [projects, setProjects] = useState<Project[]>([DEFAULT_PROJECT]);
   const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECT_ID);
@@ -225,10 +236,11 @@ export function TaskDashboard() {
 
   const loadTasks = useCallback(async () => {
     try {
-      const [loadedTasks, loadedProducts, loadedProjects] = await Promise.all([requestTasks(), requestProducts(), requestProjects()]);
+      const [loadedTasks, loadedProducts, loadedProjects, loadedEntities] = await Promise.all([requestTasks(), requestProducts(), requestProjects(), requestEntities()]);
       setTasks(loadedTasks);
       setProducts(loadedProducts);
       setProjects(loadedProjects);
+      setEntities(loadedEntities);
       setLoadError("");
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
@@ -244,8 +256,8 @@ export function TaskDashboard() {
 
   useEffect(() => {
     let current = true;
-    void Promise.all([requestTasks(), requestProducts(), requestProjects()]).then(([loadedTasks, loadedProducts, loadedProjects]) => {
-      if (current) { setTasks(loadedTasks); setProducts(loadedProducts); setProjects(loadedProjects); }
+    void Promise.all([requestTasks(), requestProducts(), requestProjects(), requestEntities()]).then(([loadedTasks, loadedProducts, loadedProjects, loadedEntities]) => {
+      if (current) { setTasks(loadedTasks); setProducts(loadedProducts); setProjects(loadedProjects); setEntities(loadedEntities); }
     }).catch((error: unknown) => {
       if (current) setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
     }).finally(() => {
@@ -271,6 +283,27 @@ export function TaskDashboard() {
     });
     return () => { current = false; };
   }, []);
+
+  const loadDirectory = useCallback(async () => {
+    try { const response = await fetch("/api/users/directory", { cache: "no-store" }); const data = await response.json() as { assignableUsers?: PublicUser[] }; setAssignmentUsers(response.ok ? data.assignableUsers ?? [] : []); }
+    catch { setAssignmentUsers([]); }
+  }, []);
+  useEffect(() => {
+    if (!userSession?.authenticated || userSession.mustChangePassword) return;
+    const timer = setTimeout(() => { void loadDirectory(); void loadTasks(); }, 0);
+    return () => clearTimeout(timer);
+  }, [userSession?.authenticated, userSession?.mustChangePassword, userSession?.email, loadDirectory, loadTasks]);
+  const ownerLabels = useMemo(() => {
+    const labels: Record<string, string> = { joint: OWNER_LABELS.joint, unassigned: OWNER_LABELS.unassigned };
+    for (const entity of entities) if (!entity.hidden && !entity.deleted) labels[entity.id] = entity.name;
+    return labels;
+  }, [entities]);
+  const OWNER_OPTIONS = Object.entries(ownerLabels);
+  function taskCanEdit(task: Task) { return task.permissions?.canEdit ?? userSession?.position === "system_admin"; }
+  const canEditMain = creatingTask || draft?.permissions?.canEditMain === true || userSession?.position === "system_admin";
+  const canUpdateMain = creatingTask || draft?.permissions?.canUpdateMain === true || userSession?.position === "system_admin";
+  const canAssign = creatingTask || draft?.permissions?.canAssign === true || userSession?.position === "system_admin";
+  function refreshAdministration() { void loadDirectory(); void loadTasks(); }
 
   async function submitAdminLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -304,6 +337,8 @@ export function TaskDashboard() {
       setUserSession(null);
       setPasswordOpen(false);
       setProductDraft(null);
+      setEntitiesOpen(false);
+      setAssignmentUsers([]);
       setAdminManagerOpen(false);
       setIsAdmin(false);
       setAdminEmail("");
@@ -409,10 +444,10 @@ export function TaskDashboard() {
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return projectTasks.filter((task) => {
-      const matchesText = !normalized || `${task.title} ${task.productName} ${task.assignee} ${task.notes} ${(task.details ?? []).map((detail) => `${detail.description} ${detail.assignee} ${OWNER_LABELS[detail.ownerType] ?? ""}`).join(" ")}`.toLowerCase().includes(normalized);
+      const matchesText = !normalized || `${task.title} ${task.productName} ${task.assignee} ${task.notes} ${(task.details ?? []).map((detail) => `${detail.description} ${detail.assignee} ${detail.ownerName ?? ownerLabels[detail.ownerType] ?? OWNER_LABELS[detail.ownerType] ?? ""}`).join(" ")}`.toLowerCase().includes(normalized);
       return matchesText && (productFilter === "all" || task.productId === productFilter) && (statusFilter === "all" || task.status === statusFilter) && (ownerFilter === "all" || task.ownerType === ownerFilter);
     });
-  }, [projectTasks, query, productFilter, statusFilter, ownerFilter]);
+  }, [projectTasks, query, productFilter, statusFilter, ownerFilter, ownerLabels]);
 
   const summary = useMemo(() => {
     const completed = projectTasks.filter((task) => task.status === "completed").length;
@@ -433,7 +468,7 @@ export function TaskDashboard() {
     .slice(0, 6), [projectTasks]);
 
   function openTask(task: Task) {
-    if (!isAdmin) return;
+    if (!taskCanEdit(task)) return;
     setCreatingTask(false);
     setEditing(task);
     setDraft({ ...task, details: (task.details ?? []).map((detail) => ({ ...detail })) });
@@ -473,7 +508,7 @@ export function TaskDashboard() {
       const valid = taskInputSchema.safeParse(draft);
       if (!valid.success) { toast.error(valid.error.issues[0]?.message); return; }
     }
-    if (!isAdmin) return;
+    if (!creatingTask && !editing?.permissions?.canEdit && userSession?.position !== "system_admin") return;
     const details = taskDetailsSchema.safeParse(draft.details ?? []);
     if (!details.success) {
       toast.error(details.error.issues[0]?.message || "تفاصيل المهمة غير صحيحة.");
@@ -493,6 +528,7 @@ export function TaskDashboard() {
         progress: progressForStatus(draft.status, draft.progress),
         ownerType: draft.ownerType,
         assignee: draft.assignee,
+        ...(draft.assigneeEmail !== undefined ? { assigneeEmail: draft.assigneeEmail } : {}),
         plannedDate: draft.plannedDate,
         endDate: draft.endDate,
         notes: draft.notes,
@@ -545,8 +581,9 @@ export function TaskDashboard() {
           <div className="flex items-center gap-2">
             {userSession?.authenticated ? <>
               <span className="hidden max-w-40 truncate text-sm font-semibold text-emerald-700 sm:inline">{adminEmail}</span>
-              {userSession.role && <span className="hidden rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-800 lg:inline">{USER_ROLES[userSession.role]}</span>}
+              {userSession.position && <span className="hidden rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-800 lg:inline">{POSITIONS[userSession.position]}</span>}
               {userSession.canManageUsers && <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => setAdminManagerOpen(true)}><UserPlus className="size-4" /><span className="hidden sm:inline">إدارة المستخدمين</span></Button>}
+              {userSession.canManageUsers && <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => setEntitiesOpen(true)} aria-label="إدارة الجهات"><Building2 className="size-4" /><span className="hidden lg:inline">إدارة الجهات</span></Button>}
               <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => setPasswordOpen(true)} aria-label="تغيير كلمة المرور"><KeyRound className="size-4" /><span className="hidden lg:inline">كلمة المرور</span></Button>
               <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void logoutAdmin()}><LogOut className="size-4" /><span className="hidden sm:inline">تسجيل الخروج</span></Button>
             </> : <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => { setLoginError(""); setLoginOpen(true); }} disabled={authLoading}><LogIn className="size-4" /><span className="hidden sm:inline">تسجيل الدخول</span></Button>}
@@ -558,11 +595,11 @@ export function TaskDashboard() {
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-8 sm:py-8">
         <section aria-label="اختيار المشروع" className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-teal-100 bg-white p-4 shadow-sm">
           <label className="grid min-w-60 flex-1 gap-2 text-sm font-bold text-teal-900">المشروع<Select dir="rtl" value={activeProjectId} onValueChange={selectProject}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></label>
-          {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus />إضافة مشروع</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description }); } }}><Pencil />تعديل المشروع</Button></>}
+          {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus />إضافة مشروع</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
           {currentProject?.description && <p className="w-full whitespace-pre-wrap text-sm leading-6 text-slate-500">{currentProject.description}</p>}
         </section>
         {isAdmin && <div className="mb-5 flex flex-wrap gap-3">
-          <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus />إضافة منتج</Button>
+          {userSession?.canManageProducts && <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus />إضافة منتج</Button>}
           <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" disabled={!visibleProducts.length} onClick={() => newTask()}><Plus />إضافة مهمة</Button>
         </div>}
         <section className="mb-6 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
@@ -596,7 +633,7 @@ export function TaskDashboard() {
                 <div className="divide-y divide-slate-100">
                   {attentionTasks.length ? attentionTasks.map((task) => (
                     <button key={task.id} onClick={() => openTask(task)} className="group grid w-full grid-cols-[1fr_auto] gap-4 px-5 py-4 text-right transition hover:bg-slate-50 sm:px-6">
-                      <div className="min-w-0"><div className="mb-1.5 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="line-clamp-2 text-base font-bold leading-7 text-slate-900">{task.title}</p><p className="mt-1 text-sm text-slate-500">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : " · لم يُسمَّ شخص مسؤول"}</p></div>
+                      <div className="min-w-0"><div className="mb-1.5 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="line-clamp-2 text-base font-bold leading-7 text-slate-900">{task.title}</p><p className="mt-1 text-sm text-slate-500">{task.ownerName ?? ownerLabels[task.ownerType] ?? OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : " · لم يُسمَّ شخص مسؤول"}</p></div>
                       <div className="flex items-center gap-3"><div className="hidden w-24 sm:block"><div className="mb-1 text-right text-xs font-bold text-slate-500">{task.progress}%</div><TaskProgress task={task} /></div><ChevronLeft className="size-5 text-slate-300 transition group-hover:-translate-x-1 group-hover:text-[#116d7b]" /></div>
                     </button>
                   )) : <div className="px-6 py-12 text-center text-slate-500"><CheckCircle2 className="mx-auto mb-3 size-9 text-emerald-500" />لا توجد مهام تتطلب تدخلاً حالياً.</div>}
@@ -665,24 +702,24 @@ export function TaskDashboard() {
                           {task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}
                         </TableCell>
                         <TableCell className="pb-4 pt-12 align-top"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell>
-                        <TableCell className="pb-4 pt-12 align-top"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell>
-                        <TableCell className="pb-4 pt-12 align-top">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell>
+                        <TableCell className="pb-4 pt-12 align-top"><p className="font-bold">{task.ownerName ?? ownerLabels[task.ownerType] ?? OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell>
+                        <TableCell className="pb-4 pt-12 align-top">{(task.permissions?.canUpdateMain || userSession?.position === "system_admin") ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell>
                         <TableCell className="pb-4 pt-12 align-top"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell>
-                        <TableCell className="px-4 pb-4 pt-12 align-top">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell>
+                        <TableCell className="px-4 pb-4 pt-12 align-top">{taskCanEdit(task) && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell>
                       </TableRow>
-                      {!!task.details?.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="px-5 pb-5 pt-0"><TaskDetailsReport task={task} /></TableCell></TableRow>}
+                      {!!task.details?.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="px-5 pb-5 pt-0"><TaskDetailsReport task={task} ownerLabels={ownerLabels} /></TableCell></TableRow>}
                     </Fragment>
                   ))}</TableBody>
                 </Table>
               </div>
 
-              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div><TaskDetailsReport task={task} /></button>)}</div>
+              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{task.ownerName ?? ownerLabels[task.ownerType] ?? OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div><TaskDetailsReport task={task} ownerLabels={ownerLabels} /></button>)}</div>
               {!filteredTasks.length && <div className="px-6 py-16 text-center text-slate-500"><CircleDashed className="mx-auto mb-3 size-10" />لا توجد مهام مطابقة لمعايير البحث.</div>}
             </section>
           </TabsContent>
 
           <TabsContent value="timeline" className="mt-5">
-            <Timeline tasks={projectTasks} onOpen={openTask} />
+            <Timeline tasks={projectTasks} onOpen={openTask} ownerLabels={ownerLabels} />
           </TabsContent>
         </Tabs>
       </div>
@@ -701,13 +738,14 @@ export function TaskDashboard() {
         </DialogContent>
       </Dialog>
 
-      <UserAccountManager open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setAdminManagerOpen} currentEmail={adminEmail} />
+      <EntityManager open={entitiesOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setEntitiesOpen} onChanged={refreshAdministration} />
+      <UserAccountManager onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setAdminManagerOpen} currentEmail={adminEmail} />
       <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 
       <Dialog open={!!projectDraft && Boolean(userSession?.canManageUsers)} onOpenChange={(open) => { if (!open && !projectSaving) { setProjectDraft(null); setEditingProjectId(null); } }}>
         <DialogContent dir="rtl" className="rounded-3xl text-right sm:max-w-lg"><DialogHeader className="text-right sm:text-right"><DialogTitle>{editingProjectId ? "تعديل المشروع" : "إضافة مشروع جديد"}</DialogTitle><DialogDescription>لكل مشروع منتجاته ومهامه. اختر المشروع من القائمة لمتابعة إنجازه وإدارة محتواه.</DialogDescription></DialogHeader>
-          {projectDraft && <fieldset disabled={projectSaving} className="grid gap-4"><label className="grid gap-2 text-sm font-bold">اسم المشروع<Input maxLength={120} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">وصف المشروع<Textarea maxLength={1200} value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} className="rounded-xl" /></label></fieldset>}
+          {projectDraft && <fieldset disabled={projectSaving} className="grid gap-4"><label className="grid gap-2 text-sm font-bold">اسم المشروع<Input maxLength={120} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">وصف المشروع<Textarea maxLength={1200} value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} className="rounded-xl" /></label><div className="grid gap-2"><p className="text-sm font-bold">الجهات المسؤولة عن المشروع</p>{entities.filter((entity) => !entity.deleted && (!entity.hidden || projectDraft.entityIds?.includes(entity.id))).map((entity) => <label key={entity.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={projectDraft.entityIds?.includes(entity.id) ?? false} disabled={entity.hidden && !projectDraft.entityIds?.includes(entity.id)} onChange={(event) => setProjectDraft({ ...projectDraft, entityIds: event.target.checked ? [...(projectDraft.entityIds ?? []), entity.id] : (projectDraft.entityIds ?? []).filter((id) => id !== entity.id) })} />{entity.name}{entity.hidden && " · محجوبة"}</label>)}</div></fieldset>}
           <DialogFooter><Button disabled={projectSaving} onClick={() => void saveProject()}>{projectSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProjectId ? "حفظ التعديلات" : "إنشاء المشروع"}</Button><Button variant="outline" disabled={projectSaving} onClick={() => { setProjectDraft(null); setEditingProjectId(null); }}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
@@ -719,7 +757,7 @@ export function TaskDashboard() {
             <label className="grid gap-2 text-sm font-bold">اسم المنتج<Input maxLength={120} className="h-11 rounded-xl" value={productDraft.name} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} /></label>
             <label className="grid gap-2 text-sm font-bold">المستهدف<Input maxLength={120} placeholder="مثل: 10 تقارير" className="h-11 rounded-xl" value={productDraft.target} onChange={(e) => setProductDraft({ ...productDraft, target: e.target.value })} /></label>
             <label className="grid gap-2 text-sm font-bold">وصف المنتج<Textarea maxLength={1200} className="rounded-xl" value={productDraft.description} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} /></label>
-            <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} label="تفاصيل المنتج" onChange={(details) => setProductDraft({ ...productDraft, details })} />
+            <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} label="تفاصيل المنتج" users={assignmentUsers} ownerLabels={ownerLabels} onChange={(details) => setProductDraft({ ...productDraft, details })} />
           </fieldset>}
           <DialogFooter><Button disabled={productSaving} onClick={() => void saveProduct()}>{productSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProductId ? "حفظ التعديلات" : "إضافة المنتج"}</Button><Button variant="outline" disabled={productSaving} onClick={() => { setProductDraft(null); setEditingProductId(null); }}>إلغاء</Button></DialogFooter>
         </DialogContent>
@@ -727,26 +765,26 @@ export function TaskDashboard() {
       <Dialog open={!!viewingProduct} onOpenChange={(open) => { if (!open) setViewingProduct(null); }}>
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl text-right sm:max-w-6xl">
           <DialogHeader className="text-right sm:text-right"><DialogTitle>{viewingProduct?.name}</DialogTitle><DialogDescription>{viewingProduct?.target || "تفاصيل المنتج"}</DialogDescription></DialogHeader>
-          {viewingProduct && <><p className="whitespace-pre-wrap text-sm leading-7">{viewingProduct.description}</p><TaskDetailsReport label="تفاصيل المنتج" task={{ title: viewingProduct.name, details: viewingProduct.details }} /></>}
+          {viewingProduct && <><p className="whitespace-pre-wrap text-sm leading-7">{viewingProduct.description}</p><TaskDetailsReport ownerLabels={ownerLabels} label="تفاصيل المنتج" task={{ title: viewingProduct.name, details: viewingProduct.details }} /></>}
         </DialogContent>
       </Dialog>
 
-      <Dialog open={(!!editing || creatingTask) && isAdmin} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setCreatingTask(false); setDraft(null); } }}>
+      <Dialog open={(!!editing || creatingTask) && Boolean(userSession?.authenticated)} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setCreatingTask(false); setDraft(null); } }}>
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl border-slate-200 text-right [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4 sm:max-w-6xl">
           <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">{creatingTask ? "إضافة مهمة جديدة" : "تحديث المهمة"}</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
           {draft && <div className="grid gap-5 py-2">
             {creatingTask && <label className="grid gap-2 text-sm font-bold">المنتج<Select dir="rtl" value={draft.productId} disabled={saving} onValueChange={(productId) => setDraft({ ...draft, productId, productName: products.find((p) => p.id === productId)?.name ?? "" })}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="اختر المنتج" /></SelectTrigger><SelectContent dir="rtl">{visibleProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>)}</SelectContent></Select></label>}
-            <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
-            {isAdmin && <TaskDetailsEditor details={draft.details ?? []} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />}
+            <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea disabled={saving || !canEditMain} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
+            <TaskDetailsEditor details={draft.details ?? []} users={assignmentUsers} ownerLabels={ownerLabels} canAssign={canAssign} canEditContent={Boolean(isAdmin)} canAdd={canEditMain && canAssign} editableDetailIds={creatingTask || userSession?.position === "system_admin" ? undefined : [...(draft.permissions?.editableDetailIds ?? []), ...(draft.details ?? []).filter((row) => !editing?.details?.some((old) => old.id === row.id)).map((row) => row.id)]} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: progressForStatus(value as TaskStatus, draft.progress) })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
-              <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
+              <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" disabled={saving || !canUpdateMain} value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: progressForStatus(value as TaskStatus, draft.progress) })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
+              <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" disabled={saving || !canEditMain} value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{!ownerLabels[draft.ownerType] && <SelectItem value={draft.ownerType} disabled>{draft.ownerName ?? OWNER_LABELS[draft.ownerType] ?? "جهة محجوبة"}</SelectItem>}{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
             </div>
-            <label className="grid gap-2 text-sm font-bold">المسؤول المباشر<div className="relative"><UserRound className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input value={draft.assignee} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} placeholder="اكتب اسم الشخص المسؤول" className="h-11 rounded-xl pr-10" /></div></label>
-            <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">تاريخ البداية<Input type="date" value={draft.plannedDate} onChange={(event) => setDraft({ ...draft, plannedDate: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">تاريخ النهاية<Input type="date" value={draft.endDate} min={draft.plannedDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} className="h-11 rounded-xl" /></label></div>
-            <label className="grid gap-3 text-sm font-bold"><span className="flex items-center justify-between"><span>نسبة الإنجاز</span><strong className="text-lg text-[#116d7b]">{draft.progress}%</strong></span><Slider disabled={saving || draft.status !== "blocked"} dir="rtl" min={0} max={100} step={5} value={[draft.progress]} onValueChange={(value) => setDraft({ ...draft, progress: value[0] })} className="[&_[data-slot=slider-range]]:bg-[#177f8f] [&_[data-slot=slider-thumb]]:border-[#177f8f]" /></label>
+            <label className="grid gap-2 text-sm font-bold">المستخدم المسند إليه<TaskAssigneeSelect users={assignmentUsers} email={draft.assigneeEmail} name={draft.assignee} disabled={saving || !canAssign || !canEditMain} onChange={(user) => setDraft({ ...draft, assigneeEmail: user?.email ?? "", assignee: user?.name ?? "", ...(user?.entityId ? { ownerType: user.entityId } : {}) })} /></label>
+            <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">تاريخ البداية<Input type="date" disabled={saving || !canEditMain} value={draft.plannedDate} onChange={(event) => setDraft({ ...draft, plannedDate: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">تاريخ النهاية<Input type="date" disabled={saving || !canEditMain} value={draft.endDate} min={draft.plannedDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} className="h-11 rounded-xl" /></label></div>
+            <label className="grid gap-3 text-sm font-bold"><span className="flex items-center justify-between"><span>نسبة الإنجاز</span><strong className="text-lg text-[#116d7b]">{draft.progress}%</strong></span><Slider disabled={saving || !canUpdateMain || draft.status !== "blocked"} dir="rtl" min={0} max={100} step={5} value={[draft.progress]} onValueChange={(value) => setDraft({ ...draft, progress: value[0] })} className="[&_[data-slot=slider-range]]:bg-[#177f8f] [&_[data-slot=slider-thumb]]:border-[#177f8f]" /></label>
             <p className="-mt-2 text-xs leading-6 text-slate-500">تُحسب نسبة الإنجاز تلقائيًا حسب الحالة. يمكن تعديل آخر نسبة إنجاز للحالة المتعثرة.</p>
-            <label className="grid gap-2 text-sm font-bold">ملاحظات التنفيذ<Textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="أضف آخر المستجدات أو العوائق أو تفاصيل التسليم..." className="min-h-28 rounded-xl text-base leading-7" /></label>
+            <label className="grid gap-2 text-sm font-bold">ملاحظات التنفيذ<Textarea disabled={saving || !canUpdateMain} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="أضف آخر المستجدات أو العوائق أو تفاصيل التسليم..." className="min-h-28 rounded-xl text-base leading-7" /></label>
           </div>}
           <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Check />}{creatingTask ? "إضافة المهمة" : "حفظ التحديث"}</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setCreatingTask(false); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
         </DialogContent>
@@ -770,7 +808,7 @@ function FilterSelect({ value, onValueChange, placeholder, options }: { value: s
   return <Select dir="rtl" value={value} onValueChange={onValueChange}><SelectTrigger aria-label={placeholder} className={`h-11 w-full rounded-xl border-slate-200 text-right ${STATUS_COLORS[value as TaskStatus]?.badge ?? ""}`} style={colors ? { color: colors.ink, backgroundColor: colors.surface, borderColor: colors.border } : undefined}><SelectValue placeholder={placeholder} /></SelectTrigger><SelectContent dir="rtl">{options.map((option) => <SelectItem key={option.value} value={option.value} className={`my-1 rounded-lg ${STATUS_COLORS[option.value as TaskStatus]?.badge ?? ""}`} style={PRODUCT_COLORS[option.value] ? { color: PRODUCT_COLORS[option.value].ink } : undefined}>{option.label}</SelectItem>)}</SelectContent></Select>;
 }
 
-function Timeline({ tasks, onOpen }: { tasks: Task[]; onOpen: (task: Task) => void }) {
+function Timeline({ tasks, onOpen, ownerLabels }: { tasks: Task[]; onOpen: (task: Task) => void; ownerLabels: Record<string, string> }) {
   const monthGroups = useMemo(() => {
     const groups = new Map<string, Task[]>();
     tasks.forEach((task) => {
@@ -781,6 +819,6 @@ function Timeline({ tasks, onOpen }: { tasks: Task[]; onOpen: (task: Task) => vo
   }, [tasks]);
   return <section className="space-y-4">{monthGroups.map(([month, monthTasks]) => {
     const monthDate = parseDate(`${month}-01`);
-    return <div key={month} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between bg-sky-950 px-5 py-4 text-white sm:px-6"><div><p className="text-sm font-bold text-sky-200">الشهر</p><h3 className="mt-1 text-xl font-black">{new Intl.DateTimeFormat("ar-SA", { month: "long", year: "numeric" }).format(monthDate)}</h3></div><span className="rounded-full bg-white/10 px-3 py-1 text-sm font-bold">{monthTasks.length} مهمة</span></div><div className="divide-y divide-slate-100">{monthTasks.map((task) => <button key={task.id} onClick={() => onOpen(task)} className="grid w-full gap-3 px-5 py-4 text-right transition hover:bg-slate-50 md:grid-cols-[105px_1fr_175px_120px] md:items-center sm:px-6"><div className="flex items-center gap-2 font-black text-slate-800"><span className="grid size-9 place-items-center rounded-xl border border-sky-200 bg-sky-50 text-sm text-sky-800">{parseDate(task.plannedDate).getDate()}</span><span className="text-sm text-slate-500">{new Intl.DateTimeFormat("ar-SA", { month: "short" }).format(parseDate(task.plannedDate))}</span></div><div><ProductPill task={task} /><p className="mt-1 font-bold leading-6">{task.title}</p></div><div className="text-sm"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-slate-500">{task.assignee || "غير مسند لشخص"}</p></div><div><TimingPill task={task} /></div></button>)}</div></div>;
+    return <div key={month} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between bg-sky-950 px-5 py-4 text-white sm:px-6"><div><p className="text-sm font-bold text-sky-200">الشهر</p><h3 className="mt-1 text-xl font-black">{new Intl.DateTimeFormat("ar-SA", { month: "long", year: "numeric" }).format(monthDate)}</h3></div><span className="rounded-full bg-white/10 px-3 py-1 text-sm font-bold">{monthTasks.length} مهمة</span></div><div className="divide-y divide-slate-100">{monthTasks.map((task) => <button key={task.id} onClick={() => onOpen(task)} className="grid w-full gap-3 px-5 py-4 text-right transition hover:bg-slate-50 md:grid-cols-[105px_1fr_175px_120px] md:items-center sm:px-6"><div className="flex items-center gap-2 font-black text-slate-800"><span className="grid size-9 place-items-center rounded-xl border border-sky-200 bg-sky-50 text-sm text-sky-800">{parseDate(task.plannedDate).getDate()}</span><span className="text-sm text-slate-500">{new Intl.DateTimeFormat("ar-SA", { month: "short" }).format(parseDate(task.plannedDate))}</span></div><div><ProductPill task={task} /><p className="mt-1 font-bold leading-6">{task.title}</p></div><div className="text-sm"><p className="font-bold">{task.ownerName ?? ownerLabels[task.ownerType] ?? OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-slate-500">{task.assignee || "غير مسند لشخص"}</p></div><div><TimingPill task={task} /></div></button>)}</div></div>;
   })}</section>;
 }

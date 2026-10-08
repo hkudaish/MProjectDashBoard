@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { authenticateUser, findAccount, publicUser } from "./user-accounts";
+import { isManager } from "./hierarchy";
 import type { UserSession } from "./user-types";
 export { normalizeAdminEmail, getAllAdminEmails } from "./legacy-admins";
 
@@ -18,7 +19,7 @@ function safeEqual(left: string, right: string) {
 export function canAdminLogin() { return Boolean(sessionSecret()); }
 export async function authenticateAdmin(email: string, password: string) {
   const account = await authenticateUser(email, password);
-  return Boolean(account && account.role === "admin");
+  return Boolean(account && account.position === "system_admin");
 }
 export function createAdminSessionToken(email: string, sessionVersion = 0) {
   const secret = sessionSecret();
@@ -44,11 +45,11 @@ export async function getUserSession(headers: Headers): Promise<UserSession | nu
 // Existing task/product endpoints use this guard; temporary-password sessions cannot mutate data.
 export async function getAdminSession(headers: Headers): Promise<AdminSession | null> {
   const session = await getUserSession(headers);
-  return session && !session.mustChangePassword && (session.role === "admin" || session.role === "editor") ? session : null;
+  return session && !session.mustChangePassword && isManager(session.position) ? session : null;
 }
 export async function getSystemAdminSession(headers: Headers) {
   const session = await getAdminSession(headers);
-  return session?.role === "admin" ? session : null;
+  return session?.position === "system_admin" ? session : null;
 }
 export function adminSessionCookie(token: string) { return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; ${process.env.NODE_ENV === "production" ? "Secure; " : ""}SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}`; }
 export function clearedAdminSessionCookie() { return `${COOKIE_NAME}=; Path=/; HttpOnly; ${process.env.NODE_ENV === "production" ? "Secure; " : ""}SameSite=Strict; Max-Age=0`; }

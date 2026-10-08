@@ -7,6 +7,8 @@ export type TaskDetail = {
   completionDate: string;
   ownerType: string;
   assignee: string;
+  assigneeEmail?: string;
+  ownerName?: string;
 };
 
 export type Task = {
@@ -19,11 +21,15 @@ export type Task = {
   endDate: string;
   ownerType: string;
   assignee: string;
+  assigneeEmail?: string;
+  ownerName?: string;
   status: TaskStatus;
   progress: number;
   notes: string;
   sourceOrder: number;
   updatedAt: string;
+  createdByEmail?: string;
+  permissions?: TaskPermissions;
 };
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -43,4 +49,6 @@ export const OWNER_LABELS: Record<string, string> = {
 
 export type Product = { id: string; projectId?: string; name: string; target: string; description: string; details?: TaskDetail[] };
 
-export type Project = { id: string; name: string; description: string };
+export type Project = { id: string; name: string; description: string; entityIds?: string[] };
+
+export type TaskPermissions = { canEdit: boolean; canEditMain: boolean; canUpdateMain: boolean; canAssign: boolean; editableDetailIds: string[] };

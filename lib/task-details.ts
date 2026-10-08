@@ -12,7 +12,8 @@ export const taskDetailsSchema = z.array(z.object({
   description: z.string().trim().min(1, "أدخل وصفًا لكل مهمة تفصيلية.").max(1200, "وصف المهمة طويل جدًا."),
   status: z.enum(["not_started", "in_progress", "review", "completed", "blocked"]),
   completionDate,
-  ownerType: z.enum(["wamy", "vendor", "joint", "unassigned"]),
+  ownerType: z.string().trim().min(1).max(120),
+  assigneeEmail: z.string().email().or(z.literal("")).optional(),
   assignee: z.string().trim().max(120, "اسم المسؤول المباشر طويل جدًا."),
 })).refine((details) => new Set(details.map((detail) => detail.id)).size === details.length,
   "معرّفات المهام التفصيلية مكررة.");

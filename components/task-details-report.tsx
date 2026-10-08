@@ -3,7 +3,7 @@ import { progressForStatus } from "@/lib/task-progress";
 import { STATUS_COLORS } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task } from "@/lib/types";
 
-export function TaskDetailsReport({ task, label = "تفاصيل المهمة" }: { task: Pick<Task, "title" | "details">; label?: string }) {
+export function TaskDetailsReport({ task, label = "تفاصيل المهمة", ownerLabels = OWNER_LABELS }: { task: Pick<Task, "title" | "details">; label?: string; ownerLabels?: Record<string, string> }) {
   if (!task.details?.length) return null;
 
   return (
@@ -27,7 +27,7 @@ export function TaskDetailsReport({ task, label = "تفاصيل المهمة" }:
               <TableCell className="whitespace-pre-wrap break-words px-3 py-3 font-semibold leading-6 text-slate-800">{detail.description}</TableCell>
               <TableCell className="px-3 py-3"><span className={`inline-flex rounded-full border px-2 py-0.5 font-bold ${STATUS_COLORS[detail.status].badge}`}>{STATUS_LABELS[detail.status]}{detail.status !== "blocked" && ` · ${progressForStatus(detail.status)}%`}</span></TableCell>
               <TableCell className="px-3 py-3 text-slate-600">{detail.completionDate ? new Intl.DateTimeFormat("ar-SA", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${detail.completionDate}T00:00:00`)) : "غير محدد"}</TableCell>
-              <TableCell className="whitespace-normal px-3 py-3 text-slate-600">{OWNER_LABELS[detail.ownerType] ?? "غير محدد"}</TableCell>
+              <TableCell className="whitespace-normal px-3 py-3 text-slate-600">{detail.ownerName ?? ownerLabels[detail.ownerType] ?? "غير محدد"}</TableCell>
               <TableCell className="whitespace-normal px-3 py-3 text-slate-600">{detail.assignee || "غير مسند لشخص"}</TableCell>
             </TableRow>
           ))}

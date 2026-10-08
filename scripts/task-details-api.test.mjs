@@ -38,10 +38,14 @@ await productsModule.link((specifier) => {
 });
 await productsModule.evaluate();
 const imports = {
+  "@/lib/types": { OWNER_LABELS: {} },
+  "@/lib/task-assignment": { normalizeTaskAssignments: async (actor, task) => task, normalizeProductDetails: async (actor, details) => details, taskPermissions: () => ({ canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] }), TaskPolicyError: class extends Error {} },
+  "@/lib/user-accounts": { listUsers: async () => [] },
+  "@/lib/entity-store": { createEntityStore: () => ({ getEntities: async () => [] }) },
   "@/lib/products": { taskTitleSchema: productsModule.namespace.taskTitleSchema, taskInputSchema: productsModule.namespace.taskInputSchema },
   "@/lib/product-store": { createProductStore: () => ({ getProducts: async () => productsModule.namespace.DEFAULT_PRODUCTS }) },
   "@netlify/blobs": { getStore: () => store },
-  "@/lib/admin-auth": { getAdminSession: async () => isAdmin ? { email: "admin@example.com" } : null },
+  "@/lib/admin-auth": { getUserSession: async () => isAdmin ? { email: "admin@example.com", position: "system_admin" } : null, getAdminSession: async () => isAdmin ? { email: "admin@example.com" } : null },
   "@/lib/task-data": { DEFAULT_TASKS: [legacyTask] },
   "@/lib/task-details": { taskDetailsSchema },
   "@/lib/task-progress": { progressForStatus },

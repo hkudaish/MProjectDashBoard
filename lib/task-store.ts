@@ -46,6 +46,8 @@ function normaliseTask(raw: unknown): Task | null {
     endDate,
     ownerType,
     assignee,
+    ...(typeof task.assigneeEmail === "string" ? { assigneeEmail: task.assigneeEmail } : {}),
+    ...(typeof task.createdByEmail === "string" ? { createdByEmail: task.createdByEmail } : {}),
     status,
     progress,
     notes,

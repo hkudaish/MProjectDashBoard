@@ -61,8 +61,10 @@ async function adminCookie() {
   assert.equal(changed.status, 200); return cookie(changed);
 }
 async function newUser(admin, email, role = "editor") {
-  const response = await users.POST(request({ email, name: "مستخدم", role, password: temporaryPassword }, admin));
-  assert.equal(response.status, 201); return response;
+  const position = role === "admin" ? "system_admin" : role === "editor" ? "project_manager" : "employee";
+  if (position === "employee" && !await accounts.findAccount("test-manager@example.com")) await newUser(admin, "test-manager@example.com");
+  const response = await users.POST(request({ email, name: "User", position, managerEmail: position === "system_admin" ? null : position === "employee" ? "test-manager@example.com" : "admin@example.com", entityId: position === "system_admin" ? null : "wamy", password: temporaryPassword }, admin));
+  assert.equal(response.status, 201, await response.clone().text()); return response;
 }
 beforeEach(() => {
   data.clear(); revision = 0; writes = 0;
@@ -131,7 +133,8 @@ test("permission matrix permits editor data changes and restricts account admini
     assert.equal((await projects.POST(request({ name: "مشروع ممنوع" }, userCookie))).status, 403);
     assert.equal((await products.PATCH(request({ id: "digital", name: "تعديل ممنوع" }, userCookie, "PATCH"))).status, 403);
     assert.equal((await users.POST(request({ email: "forbidden@example.com", name: "ممنوع", role: "admin", password: temporaryPassword }, userCookie))).status, 403);
-    assert.equal((await tasks.PATCH(request({ id: "task-1", status: "review" }, userCookie, "PATCH"))).status, role === "editor" ? 200 : 401);
+    if (role === "editor") data.set("tasks", { etag: "task", value: [{ ...seed, createdByEmail: email }] });
+    assert.equal((await tasks.PATCH(request({ id: "task-1", status: "review" }, userCookie, "PATCH"))).status, role === "editor" ? 200 : 403);
     assert.equal((await products.POST(request({ name: "منتج المحرر" }, userCookie))).status, role === "editor" ? 201 : 401);
   }
 });
@@ -162,10 +165,10 @@ test("admin reset replaces the credential, revokes sessions, clears the request 
   assert.equal((await password.POST(request({ currentPassword: temporaryPassword, newPassword: personalPassword }, cookie(relogin)))).status, 200);
 });
 test("role changes and disabling accounts take effect on existing sessions; self lockout is rejected", async () => {
-  const admin = await adminCookie(); await newUser(admin, "editor@example.com");
+  const admin = await adminCookie(); await newUser(admin, "editor@example.com"); await newUser(admin, "test-manager@example.com");
   const first = await signIn("editor@example.com", temporaryPassword);
   const changed = await password.POST(request({ currentPassword: temporaryPassword, newPassword: personalPassword }, cookie(first)));
-  assert.equal((await users.PATCH(request({ email: "editor@example.com", role: "viewer" }, admin, "PATCH"))).status, 200);
+  assert.equal((await users.PATCH(request({ email: "editor@example.com", position: "employee", managerEmail: "test-manager@example.com", entityId: "wamy" }, admin, "PATCH"))).status, 200);
   assert.equal(await auth.getUserSession(new Headers({ cookie: cookie(changed) })), null);
   assert.equal((await (await signIn("editor@example.com", personalPassword)).json()).isAdmin, false);
   assert.equal((await users.PATCH(request({ email: "editor@example.com", active: false }, admin, "PATCH"))).status, 200);
@@ -195,4 +198,110 @@ test("concurrent account creation does not overwrite another user's account", as
   const admin = await adminCookie();
   await Promise.all([newUser(admin, "one@example.com"), newUser(admin, "two@example.com")]);
   const listed = await accounts.listUsers(); assert.ok(listed.some((u) => u.email === "one@example.com")); assert.ok(listed.some((u) => u.email === "two@example.com"));
+});
+
+const directory = await exports("app/api/users/directory/route.ts");
+const entities = await exports("app/api/entities/route.ts");
+async function positioned(admin, email, position, managerEmail, entityId = "wamy") {
+  const response = await users.POST(request({ email, name: email, position, managerEmail, entityId, password: temporaryPassword }, admin));
+  assert.equal(response.status, 201, await response.clone().text()); return (await response.json()).user;
+}
+async function personalCookie(email) {
+  const signed = await signIn(email, temporaryPassword);
+  const changed = await password.POST(request({ currentPassword: temporaryPassword, newPassword: personalPassword }, cookie(signed)));
+  assert.equal(changed.status, 200); return cookie(changed);
+}
+async function tree(admin) {
+  await positioned(admin, "department@example.com", "department_manager", "admin@example.com");
+  await positioned(admin, "section@example.com", "section_head", "department@example.com");
+  await positioned(admin, "staff@example.com", "employee", "section@example.com");
+  await positioned(admin, "outside@example.com", "project_manager", "admin@example.com");
+  await positioned(admin, "otherstaff@example.com", "employee", "outside@example.com");
+}
+test("hierarchy requires valid positions, supervisors and entities and protects dependent users", async () => {
+  const admin = await adminCookie(); await tree(admin);
+  for (const fields of [
+    { position: "employee", managerEmail: "admin@example.com", entityId: "wamy" },
+    { position: "section_head", managerEmail: "outside@example.com", entityId: "wamy" },
+    { position: "department_manager", managerEmail: "admin@example.com", entityId: null },
+    { position: "system_admin", managerEmail: "admin@example.com", entityId: null },
+    { position: "project_manager", managerEmail: "admin@example.com", entityId: "missing" },
+  ]) assert.equal((await users.POST(request({ email: "bad@example.com", name: "Bad", password: temporaryPassword, ...fields }, admin))).status, 400);
+  const before = data.get("user-accounts-v1").value.find((user) => user.email === "section@example.com").passwordHash;
+  assert.equal((await users.PATCH(request({ email: "department@example.com", active: false }, admin, "PATCH"))).status, 400);
+  assert.equal((await users.PATCH(request({ email: "department@example.com", position: "project_manager" }, admin, "PATCH"))).status, 400);
+  assert.equal((await users.PATCH(request({ email: "staff@example.com", managerEmail: "staff@example.com" }, admin, "PATCH"))).status, 400);
+  await positioned(admin, "seconddepartment@example.com", "department_manager", "admin@example.com");
+  assert.equal((await users.PATCH(request({ email: "section@example.com", managerEmail: "seconddepartment@example.com" }, admin, "PATCH"))).status, 200);
+  assert.equal(data.get("user-accounts-v1").value.find((user) => user.email === "section@example.com").passwordHash, before);
+});
+test("managers can assign to all descendants and employees can update only their assigned work", async () => {
+  const admin = await adminCookie(); await tree(admin);
+  const manager = await personalCookie("department@example.com");
+  const staff = await personalCookie("staff@example.com");
+  const scoped = await (await directory.GET(request(null, manager, "GET"))).json();
+  assert.deepEqual(scoped.assignableUsers.map((user) => user.email).sort(), ["section@example.com", "staff@example.com"]);
+  const detail = { id: "own-row", description: "Detail", status: "not_started", completionDate: "", ownerType: "wamy", assignee: "forged name", assigneeEmail: "staff@example.com" };
+  const created = await tasks.POST(request({ ...seed, title: "Assigned task", assignee: "forged name", assigneeEmail: "staff@example.com", details: [detail] }, manager));
+  assert.equal(created.status, 201, await created.clone().text()); const task = (await created.json()).task;
+  assert.equal(task.assignee, "staff@example.com"); assert.equal(task.details[0].assignee, "staff@example.com");
+  assert.equal((await tasks.PATCH(request({ id: task.id, assigneeEmail: "otherstaff@example.com", assignee: "otherstaff@example.com" }, manager, "PATCH"))).status, 403);
+  assert.equal((await tasks.POST(request({ ...seed, title: "Outside task", assigneeEmail: "otherstaff@example.com" }, manager))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: task.id, status: "review" }, staff, "PATCH"))).status, 200);
+  assert.equal((await tasks.PATCH(request({ id: task.id, title: "Changed title" }, staff, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: task.id, details: [{ ...task.details[0], status: "completed", completionDate: "2026-10-08" }] }, staff, "PATCH"))).status, 200);
+  assert.equal((await tasks.PATCH(request({ id: task.id, details: [{ ...task.details[0], description: "Forged" }] }, staff, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: task.id, details: [] }, staff, "PATCH"))).status, 403);
+  const anonymous = await (await tasks.GET()).json();
+  assert.ok(anonymous.tasks.every((item) => !Object.hasOwn(item, "assigneeEmail") && !Object.hasOwn(item, "createdByEmail")));
+  assert.ok(!JSON.stringify(scoped).includes("passwordHash"));
+});
+test("detail assignments preserve protected rows and scope follows administrative reparenting", async () => {
+  const admin = await adminCookie(); await tree(admin);
+  const manager = await personalCookie("department@example.com");
+  const row = (id, email) => ({ id, description: id, status: "not_started", completionDate: "", ownerType: "wamy", assignee: "", assigneeEmail: email });
+  const created = await tasks.POST(request({ ...seed, assigneeEmail: "section@example.com", details: [row("own", "staff@example.com"), row("protected", "otherstaff@example.com")] }, admin));
+  assert.equal(created.status, 201); const task = (await created.json()).task;
+  assert.equal((await tasks.PATCH(request({ id: task.id, details: task.details.map((detail) => detail.id === "protected" ? { ...detail, status: "completed" } : detail) }, manager, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: task.id, details: [task.details[0]] }, manager, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: task.id, details: task.details.map((detail) => detail.id === "own" ? { ...detail, status: "review" } : detail) }, manager, "PATCH"))).status, 200);
+  await positioned(admin, "seconddepartment@example.com", "department_manager", "admin@example.com");
+  assert.equal((await users.PATCH(request({ email: "section@example.com", managerEmail: "seconddepartment@example.com" }, admin, "PATCH"))).status, 200);
+  assert.equal((await tasks.PATCH(request({ id: task.id, status: "completed" }, manager, "PATCH"))).status, 403);
+  assert.deepEqual((await (await directory.GET(request(null, manager, "GET"))).json()).assignableUsers, []);
+});
+test("entity creation, rename, hiding and deletion retain linked records and validate project membership", async () => {
+  const admin = await adminCookie();
+  const added = await entities.POST(request({ name: "New Entity", description: "Original" }, admin)); assert.equal(added.status, 201);
+  const entity = (await added.json()).entity;
+  assert.equal((await entities.PATCH(request({ id: entity.id, name: "Renamed Entity" }, admin, "PATCH"))).status, 200);
+  const project = await projects.POST(request({ name: "Entity Project", entityIds: [entity.id] }, admin)); assert.equal(project.status, 201);
+  assert.equal((await entities.DELETE(request({ id: entity.id }, admin, "DELETE"))).status, 409);
+  assert.equal((await entities.PATCH(request({ id: entity.id, hidden: true }, admin, "PATCH"))).status, 200);
+  assert.ok(!(await (await entities.GET(request(null, "", "GET"))).json()).entities.some((item) => item.id === entity.id));
+  assert.ok((await (await entities.GET(request(null, admin, "GET"))).json()).entities.some((item) => item.id === entity.id && item.hidden));
+  assert.equal((await projects.POST(request({ name: "Invalid Project", entityIds: [entity.id] }, admin))).status, 400);
+  const current = (await project.json()).project;
+  assert.equal((await projects.PATCH(request({ id: current.id, name: "Renamed Project", entityIds: [entity.id] }, admin, "PATCH"))).status, 200);
+  assert.equal((await users.POST(request({ email: "hidden@example.com", name: "Hidden", position: "project_manager", managerEmail: "admin@example.com", entityId: entity.id, password: temporaryPassword }, admin))).status, 400);
+  const unused = await entities.POST(request({ name: "Unused" }, admin)); const unusedId = (await unused.json()).entity.id;
+  assert.equal((await entities.DELETE(request({ id: unusedId }, admin, "DELETE"))).status, 200);
+  assert.ok(!(await (await entities.GET(request(null, admin, "GET"))).json()).entities.some((item) => item.id === unusedId));
+  assert.equal((await entities.POST(request({ name: "Forbidden" }))).status, 403);
+});
+test("existing salted credentials and active sessions survive the addition of hierarchy fields", async () => {
+  const admin = await adminCookie(); const raw = data.get("user-accounts-v1").value;
+  const previous = structuredClone(raw.find((user) => user.email === "admin@example.com"));
+  for (const user of raw) { delete user.position; delete user.managerEmail; delete user.entityId; }
+  data.set("user-accounts-v1", { etag: "legacy-no-hierarchy", value: raw });
+  const active = await auth.getSystemAdminSession(new Headers({ cookie: admin })); assert.equal(active.position, "system_admin");
+  const account = await accounts.findAccount("admin@example.com"); assert.equal(account.passwordHash, previous.passwordHash); assert.equal(account.sessionVersion, previous.sessionVersion);
+  assert.equal((await signIn("admin@example.com", personalPassword)).status, 200);
+});
+
+test("updating the system director's display name preserves their active session and credential", async () => {
+  const admin = await adminCookie(); const before = await accounts.findAccount("admin@example.com");
+  assert.equal((await users.PATCH(request({ email: "admin@example.com", name: "Updated Director", position: "system_admin", managerEmail: null, entityId: null }, admin, "PATCH"))).status, 200);
+  const after = await accounts.findAccount("admin@example.com"); assert.equal(after.passwordHash, before.passwordHash); assert.equal(after.sessionVersion, before.sessionVersion);
+  assert.equal((await auth.getSystemAdminSession(new Headers({ cookie: admin }))).name, "Updated Director");
 });
