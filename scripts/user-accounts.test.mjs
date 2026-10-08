@@ -382,3 +382,31 @@ test("legacy employee/project links are repairable without granting project mana
   assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"section@example.com"},admin,"PATCH"))).status,200);
   assert.equal((await accounts.findAccount("staff@example.com")).passwordHash,previousHash);
 });
+
+test("employee dual reporting grants both administrative branches scope and removing the extra link revokes it", async () => {
+  const admin=await adminCookie();await tree(admin);const outside=await personalCookie("outside@example.com");
+  const updated=await users.PATCH(request({email:"staff@example.com",managerPosition:"both",additionalManagerEmail:"outside@example.com"},admin,"PATCH"));assert.equal(updated.status,200);assert.equal((await updated.json()).user.additionalManagerEmail,"outside@example.com");
+  const directoryData=await(await directory.GET(request(null,outside,"GET"))).json();assert.ok(directoryData.assignableUsers.some(user=>user.email==="staff@example.com"));assert.ok(!directoryData.assignableUsers.some(user=>user.email==="section@example.com"));
+  const created=await tasks.POST(request({...seed,title:"Dual assignment",assignee:"",assigneeEmail:"staff@example.com"},outside));assert.equal(created.status,201);const task=(await created.json()).task;
+  assert.equal((await users.PATCH(request({email:"outside@example.com",active:false},admin,"PATCH"))).status,400);
+  assert.equal((await users.DELETE(request({email:"outside@example.com"},admin,"DELETE"))).status,400);
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerPosition:"section_head",additionalManagerEmail:null},admin,"PATCH"))).status,200);
+  assert.ok(!(await(await directory.GET(request(null,outside,"GET"))).json()).assignableUsers.some(user=>user.email==="staff@example.com"));
+  assert.equal((await tasks.PATCH(request({id:task.id,status:"completed"},outside,"PATCH"))).status,403);
+  assert.ok(hierarchy.subordinateUsers(await accounts.listUsers(),"department@example.com").some(user=>user.email==="staff@example.com"));
+});
+test("dual reporting requires a section head and a department manager and cannot be forged for other positions", async () => {
+  const admin=await adminCookie();await tree(admin);
+  for(const changes of [
+    {email:"staff@example.com",managerPosition:"both",additionalManagerEmail:null},
+    {email:"staff@example.com",additionalManagerEmail:"section@example.com"},
+    {email:"staff@example.com",managerPosition:"department_manager"},
+    {email:"staff@example.com",managerEmail:"department@example.com",additionalManagerEmail:"outside@example.com"},
+    {email:"section@example.com",additionalManagerEmail:"outside@example.com"},
+    {email:"admin@example.com",additionalManagerEmail:"outside@example.com"}
+  ])assert.equal((await users.PATCH(request(changes,admin,"PATCH"))).status,400);
+  const created=await users.POST(request({email:"dual@example.com",name:"Dual Employee",position:"employee",managerPosition:"both",managerEmail:"section@example.com",additionalManagerEmail:"outside@example.com",entityId:"wamy",password:temporaryPassword},admin));assert.equal(created.status,201);
+  assert.equal((await users.POST(request({email:"incomplete@example.com",name:"Incomplete",position:"employee",managerPosition:"both",managerEmail:"section@example.com",entityId:"wamy",password:temporaryPassword},admin))).status,400);
+  assert.equal((await users.PATCH(request({email:"dual@example.com",position:"section_head",managerEmail:"department@example.com"},admin,"PATCH"))).status,400);
+  assert.equal((await users.PATCH(request({email:"dual@example.com",position:"section_head",managerEmail:"department@example.com",additionalManagerEmail:null},admin,"PATCH"))).status,200);
+});

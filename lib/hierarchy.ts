@@ -5,7 +5,11 @@ export function subordinateUsers(users: PublicUser[], email: string): PublicUser
   let changed = true;
   while (changed) {
     changed = false;
-    for (const user of users) if (user.email !== email && user.managerEmail && user.position && users.some((manager) => manager.email === user.managerEmail && manager.position && MANAGER_POSITIONS[user.position!].includes(manager.position)) && (user.managerEmail === email || descendants.has(user.managerEmail)) && !descendants.has(user.email)) { descendants.add(user.email); changed = true; }
+    for (const user of users) {
+      if (user.email === email || !user.position || descendants.has(user.email)) continue;
+      const parents = [user.managerEmail, ...(user.position === "employee" && users.some((manager) => manager.email === user.managerEmail && manager.position === "section_head") ? [user.additionalManagerEmail] : [])];
+      if (parents.some((parent) => parent && (parent === email || descendants.has(parent)) && users.some((manager) => manager.email === parent && manager.position && MANAGER_POSITIONS[user.position!].includes(manager.position)))) { descendants.add(user.email); changed = true; }
+    }
   }
   return users.filter((user) => descendants.has(user.email));
 }
