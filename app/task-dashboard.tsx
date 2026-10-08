@@ -38,16 +38,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
 import { taskDetailsSchema } from "@/lib/task-details";
+import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus } from "@/lib/types";
 
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
 type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details">>;
 
 const PRODUCTS = [
-  { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", icon: Images, color: "#177f8f" },
-  { id: "infographic", name: "الإنفوجرافيك", target: "13 منشوراً", icon: Sparkles, color: "#d89b27" },
-  { id: "film", name: "الأفلام التوعوية", target: "3 أفلام", icon: Film, color: "#5869aa" },
-  { id: "report", name: "التقارير الاستراتيجية", target: "3 تقارير", icon: FileBarChart, color: "#b95f58" },
+  { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", icon: Images },
+  { id: "infographic", name: "الإنفوجرافيك", target: "13 منشوراً", icon: Sparkles },
+  { id: "film", name: "الأفلام التوعوية", target: "3 أفلام", icon: Film },
+  { id: "report", name: "التقارير الاستراتيجية", target: "3 تقارير", icon: FileBarChart },
 ];
 
 const STATUS_OPTIONS = Object.entries(STATUS_LABELS) as [TaskStatus, string][];
@@ -115,26 +116,38 @@ function relativeTiming(task: Task) {
 const timingStyles: Record<TimingState, string> = {
   late: "border-red-200 bg-red-50 text-red-700",
   active: "border-amber-200 bg-amber-50 text-amber-800",
-  soon: "border-cyan-200 bg-cyan-50 text-cyan-800",
+  soon: "border-sky-200 bg-sky-50 text-sky-800",
   upcoming: "border-slate-200 bg-slate-50 text-slate-600",
   done: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
 
-const statusStyles: Record<TaskStatus, string> = {
-  not_started: "bg-slate-100 text-slate-700",
-  in_progress: "bg-cyan-100 text-cyan-800",
-  review: "bg-amber-100 text-amber-800",
-  completed: "bg-emerald-100 text-emerald-800",
-  blocked: "bg-red-100 text-red-800",
+const STATUS_ICONS = {
+  not_started: CircleDashed,
+  in_progress: Clock3,
+  review: FileBarChart,
+  completed: CheckCircle2,
+  blocked: AlertTriangle,
 };
 
 function StatusPill({ status }: { status: TaskStatus }) {
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-sm font-bold ${statusStyles[status]}`}>{STATUS_LABELS[status]}</span>;
+  const Icon = STATUS_ICONS[status];
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-bold ${STATUS_COLORS[status].badge}`}><Icon aria-hidden="true" className="size-3.5 shrink-0" />{STATUS_LABELS[status]}</span>;
+}
+
+function ProductPill({ task }: { task: Task }) {
+  const colors = productColors(task.productId);
+  const Icon = PRODUCTS.find((product) => product.id === task.productId)?.icon ?? ListChecks;
+  return <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 text-sm font-bold" style={{ color: colors.ink, backgroundColor: colors.surface, borderColor: colors.border }}><Icon aria-hidden="true" className="size-3.5 shrink-0" /><span>{task.productName}</span></span>;
+}
+
+function TaskProgress({ task }: { task: Task }) {
+  return <Progress value={task.progress} className={`bg-slate-100 ${STATUS_COLORS[task.status].progress}`} />;
 }
 
 function TimingPill({ task }: { task: Task }) {
   const state = timingState(task);
-  return <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-sm font-bold ${timingStyles[state]}`}>{relativeTiming(task)}</span>;
+  const Icon = state === "late" ? AlertTriangle : state === "done" ? CheckCircle2 : state === "active" ? Clock3 : CalendarDays;
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-bold ${timingStyles[state]}`}><Icon aria-hidden="true" className="size-3.5 shrink-0" />{relativeTiming(task)}</span>;
 }
 
 function LoadingView() {
@@ -484,23 +497,23 @@ export function TaskDashboard() {
 
         <Tabs dir="rtl" value={tab} onValueChange={setTab} className="mt-7 text-right">
           <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm sm:w-fit">
-            <TabsTrigger value="overview" className="h-10 rounded-xl px-4"><LayoutDashboard /> نظرة عامة</TabsTrigger>
-            <TabsTrigger value="tasks" className="h-10 rounded-xl px-4"><ListChecks /> جميع المهام</TabsTrigger>
-            <TabsTrigger value="timeline" className="h-10 rounded-xl px-4"><CalendarDays /> الجدول الزمني</TabsTrigger>
+            <TabsTrigger value="overview" className="h-10 rounded-xl px-4 font-bold hover:bg-teal-50 data-[state=active]:bg-teal-50 data-[state=active]:text-teal-800 data-[state=active]:border-teal-200"><LayoutDashboard /> نظرة عامة</TabsTrigger>
+            <TabsTrigger value="tasks" className="h-10 rounded-xl px-4 font-bold hover:bg-indigo-50 data-[state=active]:bg-indigo-50 data-[state=active]:text-indigo-800 data-[state=active]:border-indigo-200"><ListChecks /> جميع المهام</TabsTrigger>
+            <TabsTrigger value="timeline" className="h-10 rounded-xl px-4 font-bold hover:bg-sky-50 data-[state=active]:bg-sky-50 data-[state=active]:text-sky-800 data-[state=active]:border-sky-200"><CalendarDays /> الجدول الزمني</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="mt-5 space-y-5">
             <div className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
-              <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 sm:px-6">
-                  <div><h3 className="text-lg font-black">يحتاج إلى انتباه</h3><p className="mt-1 text-sm text-slate-500">المهام المتأخرة والجارية والمتعثرة</p></div>
+              <section className="overflow-hidden rounded-3xl border border-red-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between gap-3 border-b border-red-100 bg-gradient-to-l from-red-50 to-white px-5 py-4 sm:px-6">
+                  <div><h3 className="flex items-center gap-2 text-lg font-black text-red-900"><AlertTriangle aria-hidden="true" className="size-5 text-red-700" />يحتاج إلى انتباه</h3><p className="mt-1 text-sm text-slate-500">المهام المتأخرة والجارية والمتعثرة</p></div>
                   <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-black text-red-700">{attentionTasks.length}</span>
                 </div>
                 <div className="divide-y divide-slate-100">
                   {attentionTasks.length ? attentionTasks.map((task) => (
                     <button key={task.id} onClick={() => openTask(task)} className="group grid w-full grid-cols-[1fr_auto] gap-4 px-5 py-4 text-right transition hover:bg-slate-50 sm:px-6">
-                      <div className="min-w-0"><div className="mb-1.5 flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#116d7b]">{task.productName}</span><TimingPill task={task} /></div><p className="line-clamp-2 text-base font-bold leading-7 text-slate-900">{task.title}</p><p className="mt-1 text-sm text-slate-500">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : " · لم يُسمَّ شخص مسؤول"}</p></div>
-                      <div className="flex items-center gap-3"><div className="hidden w-24 sm:block"><div className="mb-1 text-right text-xs font-bold text-slate-500">{task.progress}%</div><Progress value={task.progress} className="bg-slate-100 [&_[data-slot=progress-indicator]]:bg-[#177f8f]" /></div><ChevronLeft className="size-5 text-slate-300 transition group-hover:-translate-x-1 group-hover:text-[#116d7b]" /></div>
+                      <div className="min-w-0"><div className="mb-1.5 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="line-clamp-2 text-base font-bold leading-7 text-slate-900">{task.title}</p><p className="mt-1 text-sm text-slate-500">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : " · لم يُسمَّ شخص مسؤول"}</p></div>
+                      <div className="flex items-center gap-3"><div className="hidden w-24 sm:block"><div className="mb-1 text-right text-xs font-bold text-slate-500">{task.progress}%</div><TaskProgress task={task} /></div><ChevronLeft className="size-5 text-slate-300 transition group-hover:-translate-x-1 group-hover:text-[#116d7b]" /></div>
                     </button>
                   )) : <div className="px-6 py-12 text-center text-slate-500"><CheckCircle2 className="mx-auto mb-3 size-9 text-emerald-500" />لا توجد مهام تتطلب تدخلاً حالياً.</div>}
                 </div>
@@ -515,30 +528,31 @@ export function TaskDashboard() {
             </div>
 
             <section>
-              <div className="mb-3"><h3 className="text-lg font-black">المنتجات الأربعة</h3><p className="mt-1 text-sm text-slate-500">تقدم كل مسار وفق مهامه المسندة</p></div>
+              <div className="mb-3"><h3 className="flex items-center gap-2 text-lg font-black text-teal-900"><Images aria-hidden="true" className="size-5 text-teal-700" />المنتجات الأربعة</h3><p className="mt-1 text-sm text-slate-500">تقدم كل مسار وفق مهامه المسندة</p></div>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{PRODUCTS.map((product) => {
                 const productTasks = tasks.filter((task) => task.productId === product.id);
                 const progress = productTasks.length ? Math.round(productTasks.reduce((sum, task) => sum + task.progress, 0) / productTasks.length) : 0;
                 const late = productTasks.filter((task) => timingState(task) === "late").length;
                 const Icon = product.icon;
-                return <button key={product.id} onClick={() => { setProductFilter(product.id); setTab("tasks"); }} className="rounded-3xl border border-slate-200 bg-white p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-                  <div className="flex items-start justify-between"><div className="grid size-11 place-items-center rounded-2xl text-white" style={{ backgroundColor: product.color }}><Icon className="size-5" /></div><span className="text-2xl font-black tabular-nums">{progress}%</span></div>
-                  <h4 className="mt-5 text-base font-black">{product.name}</h4><p className="mt-1 text-sm text-slate-500">{product.target} · {productTasks.length} مهمة</p>
-                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, backgroundColor: product.color }} /></div>
-                  <div className="mt-3 flex items-center justify-between text-sm"><span className={late ? "font-bold text-red-600" : "text-slate-500"}>{late ? `${late} متأخرة` : "ضمن المسار"}</span><ChevronLeft className="size-4 text-slate-400" /></div>
+                const colors = productColors(product.id);
+                return <button key={product.id} onClick={() => { setProductFilter(product.id); setTab("tasks"); }} className="rounded-3xl border border-t-4 p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#116d7b]" style={{ borderColor: colors.border, borderTopColor: colors.accent, background: `linear-gradient(145deg, #ffffff, ${colors.surface})` }}>
+                  <div className="flex items-start justify-between"><div className="grid size-11 place-items-center rounded-2xl text-white" style={{ backgroundColor: colors.accent }}><Icon className="size-5" /></div><span className="text-2xl font-black tabular-nums" style={{ color: colors.ink }}>{progress}%</span></div>
+                  <h4 className="mt-5 text-base font-black" style={{ color: colors.ink }}>{product.name}</h4><p className="mt-1 text-sm text-slate-500">{product.target} · {productTasks.length} مهمة</p>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, backgroundColor: colors.accent }} /></div>
+                  <div className="mt-3 flex items-center justify-between text-sm"><span className={late ? "rounded-full bg-red-50 px-2 py-1 font-bold text-red-700" : "rounded-full bg-emerald-50 px-2 py-1 font-bold text-emerald-800"}>{late ? `${late} متأخرة` : "ضمن المسار"}</span><ChevronLeft className="size-4 text-slate-400" /></div>
                 </button>;
               })}</div>
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <div className="mb-4"><h3 className="text-lg font-black">المواعيد القادمة</h3><p className="mt-1 text-sm text-slate-500">أقرب ستة استحقاقات في الخطة</p></div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{upcomingTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="rounded-2xl border border-slate-200 p-4 text-right transition hover:border-[#7eb9c2] hover:bg-[#f7fbfc]"><div className="flex items-center justify-between gap-3"><span className="text-sm font-bold text-[#116d7b]">{task.productName}</span><span className="text-sm font-black text-slate-700">{formatDate(task.plannedDate)}</span></div><p className="mt-2 line-clamp-2 text-base font-bold leading-7">{task.title}</p><p className="mt-2 text-sm text-slate-500">{relativeTiming(task)}</p></button>)}</div>
+            <section className="rounded-3xl border border-sky-200 bg-gradient-to-br from-white to-sky-50/60 p-5 shadow-sm sm:p-6">
+              <div className="mb-4"><h3 className="flex items-center gap-2 text-lg font-black text-sky-900"><CalendarDays aria-hidden="true" className="size-5 text-sky-700" />المواعيد القادمة</h3><p className="mt-1 text-sm text-slate-500">أقرب ستة استحقاقات في الخطة</p></div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{upcomingTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="rounded-2xl border border-sky-100 bg-white p-4 text-right shadow-sm transition hover:border-sky-300 hover:bg-sky-50"><div className="flex items-center justify-between gap-3"><ProductPill task={task} /><span className="shrink-0 rounded-lg bg-sky-50 px-2 py-1 text-sm font-black text-sky-800">{formatDate(task.plannedDate)}</span></div><p className="mt-2 line-clamp-2 text-base font-bold leading-7">{task.title}</p><p className="mt-2 text-sm text-slate-500">{relativeTiming(task)}</p></button>)}</div>
             </section>
           </TabsContent>
 
           <TabsContent value="tasks" className="mt-5">
             <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-              <div className="border-b border-slate-100 p-4 sm:p-5">
+              <div className="border-b border-indigo-100 bg-gradient-to-l from-indigo-50/70 to-white p-4 sm:p-5">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_210px_190px_190px]">
                   <div className="relative"><Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ابحث في المهام أو المسؤولين..." className="h-11 rounded-xl border-slate-200 pr-10" /></div>
                   <FilterSelect value={productFilter} onValueChange={setProductFilter} placeholder="كل المنتجات" options={[{ value: "all", label: "كل المنتجات" }, ...PRODUCTS.map((product) => ({ value: product.id, label: product.name }))]} />
@@ -550,12 +564,12 @@ export function TaskDashboard() {
 
               <div className="hidden lg:block">
                 <Table dir="rtl" className="text-right [&_td]:text-right [&_th]:text-right">
-                  <TableHeader><TableRow className="bg-slate-50 hover:bg-slate-50"><TableHead className="w-[44%] px-5 text-right">المهمة</TableHead><TableHead className="text-right">الموعد</TableHead><TableHead className="text-right">المسؤول</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-right">الإنجاز</TableHead><TableHead className="w-14" /></TableRow></TableHeader>
-                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><p className="text-sm font-bold text-[#116d7b]">{task.productName}</p><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}</TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className="h-10 w-[165px] rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><Progress value={task.progress} className="bg-slate-100 [&_[data-slot=progress-indicator]]:bg-[#177f8f]" /></div></TableCell><TableCell className="px-4">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell></TableRow>)}</TableBody>
+                  <TableHeader><TableRow className="bg-indigo-50/60 hover:bg-indigo-50/60 [&_th]:font-bold [&_th]:text-indigo-900"><TableHead className="w-[44%] px-5 text-right">المهمة</TableHead><TableHead className="text-right">الموعد</TableHead><TableHead className="text-right">المسؤول</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-right">الإنجاز</TableHead><TableHead className="w-14" /></TableRow></TableHeader>
+                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><ProductPill task={task} /><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}</TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell><TableCell className="px-4">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell></TableRow>)}</TableBody>
                 </Table>
               </div>
 
-              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#116d7b]">{task.productName}</span><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><Progress value={task.progress} /></div></div></button>)}</div>
+              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div></button>)}</div>
               {!filteredTasks.length && <div className="px-6 py-16 text-center text-slate-500"><CircleDashed className="mx-auto mb-3 size-10" />لا توجد مهام مطابقة لمعايير البحث.</div>}
             </section>
           </TabsContent>
@@ -614,7 +628,7 @@ export function TaskDashboard() {
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
             {isAdmin && <TaskDetailsEditor details={draft.details ?? []} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />}
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: value === "completed" ? 100 : value === "not_started" ? 0 : draft.progress })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
+              <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: value === "completed" ? 100 : value === "not_started" ? 0 : draft.progress })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
               <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
             </div>
             <label className="grid gap-2 text-sm font-bold">المسؤول المباشر<div className="relative"><UserRound className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input value={draft.assignee} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} placeholder="اكتب اسم الشخص المسؤول" className="h-11 rounded-xl pr-10" /></div></label>
@@ -630,12 +644,18 @@ export function TaskDashboard() {
 }
 
 function MetricCard({ label, value, note, icon: Icon, tone }: { label: string; value: number; note: string; icon: typeof ListChecks; tone: "teal" | "green" | "amber" | "red" }) {
-  const styles = { teal: "bg-cyan-50 text-[#116d7b]", green: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700", red: "bg-red-50 text-red-700" };
-  return <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-start justify-between"><div><p className="text-sm font-bold text-slate-500">{label}</p><p className="mt-2 text-4xl font-black tabular-nums text-slate-950">{value}</p></div><div className={`grid size-11 place-items-center rounded-2xl ${styles[tone]}`}><Icon className="size-5" /></div></div><p className="mt-3 text-sm text-slate-500">{note}</p></div>;
+  const styles = {
+    teal: { frame: "border-teal-200 from-white to-teal-50", icon: "bg-teal-100 text-teal-800", ink: "text-teal-900", line: "border-t-teal-600" },
+    green: { frame: "border-emerald-200 from-white to-emerald-50", icon: "bg-emerald-100 text-emerald-800", ink: "text-emerald-900", line: "border-t-emerald-600" },
+    amber: { frame: "border-amber-200 from-white to-amber-50", icon: "bg-amber-100 text-amber-800", ink: "text-amber-900", line: "border-t-amber-600" },
+    red: { frame: "border-red-200 from-white to-red-50", icon: "bg-red-100 text-red-800", ink: "text-red-900", line: "border-t-red-600" },
+  }[tone];
+  return <div className={`rounded-3xl border border-t-4 bg-gradient-to-br p-5 shadow-sm ${styles.frame} ${styles.line}`}><div className="flex items-start justify-between gap-3"><div><p className={`text-sm font-bold ${styles.ink}`}>{label}</p><p className={`mt-2 text-4xl font-black tabular-nums ${styles.ink}`}>{value}</p></div><div className={`grid size-11 shrink-0 place-items-center rounded-2xl ${styles.icon}`}><Icon aria-hidden="true" className="size-5" /></div></div><p className="mt-3 text-sm text-slate-600">{note}</p></div>;
 }
 
 function FilterSelect({ value, onValueChange, placeholder, options }: { value: string; onValueChange: (value: string) => void; placeholder: string; options: { value: string; label: string }[] }) {
-  return <Select dir="rtl" value={value} onValueChange={onValueChange}><SelectTrigger className="h-11 w-full rounded-xl border-slate-200 text-right"><SelectValue placeholder={placeholder} /></SelectTrigger><SelectContent dir="rtl">{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>;
+  const colors = PRODUCT_COLORS[value];
+  return <Select dir="rtl" value={value} onValueChange={onValueChange}><SelectTrigger aria-label={placeholder} className={`h-11 w-full rounded-xl border-slate-200 text-right ${STATUS_COLORS[value as TaskStatus]?.badge ?? ""}`} style={colors ? { color: colors.ink, backgroundColor: colors.surface, borderColor: colors.border } : undefined}><SelectValue placeholder={placeholder} /></SelectTrigger><SelectContent dir="rtl">{options.map((option) => <SelectItem key={option.value} value={option.value} className={`my-1 rounded-lg ${STATUS_COLORS[option.value as TaskStatus]?.badge ?? ""}`} style={PRODUCT_COLORS[option.value] ? { color: PRODUCT_COLORS[option.value].ink } : undefined}>{option.label}</SelectItem>)}</SelectContent></Select>;
 }
 
 function Timeline({ tasks, onOpen }: { tasks: Task[]; onOpen: (task: Task) => void }) {
@@ -649,6 +669,6 @@ function Timeline({ tasks, onOpen }: { tasks: Task[]; onOpen: (task: Task) => vo
   }, [tasks]);
   return <section className="space-y-4">{monthGroups.map(([month, monthTasks]) => {
     const monthDate = parseDate(`${month}-01`);
-    return <div key={month} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between bg-[#103e49] px-5 py-4 text-white sm:px-6"><div><p className="text-sm font-bold text-cyan-200">الشهر</p><h3 className="mt-1 text-xl font-black">{new Intl.DateTimeFormat("ar-SA", { month: "long", year: "numeric" }).format(monthDate)}</h3></div><span className="rounded-full bg-white/10 px-3 py-1 text-sm font-bold">{monthTasks.length} مهمة</span></div><div className="divide-y divide-slate-100">{monthTasks.map((task) => <button key={task.id} onClick={() => onOpen(task)} className="grid w-full gap-3 px-5 py-4 text-right transition hover:bg-slate-50 md:grid-cols-[105px_1fr_175px_120px] md:items-center sm:px-6"><div className="flex items-center gap-2 font-black text-slate-800"><span className="grid size-9 place-items-center rounded-xl bg-slate-100 text-sm">{parseDate(task.plannedDate).getDate()}</span><span className="text-sm text-slate-500">{new Intl.DateTimeFormat("ar-SA", { month: "short" }).format(parseDate(task.plannedDate))}</span></div><div><p className="text-sm font-bold text-[#116d7b]">{task.productName}</p><p className="mt-1 font-bold leading-6">{task.title}</p></div><div className="text-sm"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-slate-500">{task.assignee || "غير مسند لشخص"}</p></div><div><TimingPill task={task} /></div></button>)}</div></div>;
+    return <div key={month} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center justify-between bg-sky-950 px-5 py-4 text-white sm:px-6"><div><p className="text-sm font-bold text-sky-200">الشهر</p><h3 className="mt-1 text-xl font-black">{new Intl.DateTimeFormat("ar-SA", { month: "long", year: "numeric" }).format(monthDate)}</h3></div><span className="rounded-full bg-white/10 px-3 py-1 text-sm font-bold">{monthTasks.length} مهمة</span></div><div className="divide-y divide-slate-100">{monthTasks.map((task) => <button key={task.id} onClick={() => onOpen(task)} className="grid w-full gap-3 px-5 py-4 text-right transition hover:bg-slate-50 md:grid-cols-[105px_1fr_175px_120px] md:items-center sm:px-6"><div className="flex items-center gap-2 font-black text-slate-800"><span className="grid size-9 place-items-center rounded-xl border border-sky-200 bg-sky-50 text-sm text-sky-800">{parseDate(task.plannedDate).getDate()}</span><span className="text-sm text-slate-500">{new Intl.DateTimeFormat("ar-SA", { month: "short" }).format(parseDate(task.plannedDate))}</span></div><div><ProductPill task={task} /><p className="mt-1 font-bold leading-6">{task.title}</p></div><div className="text-sm"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-slate-500">{task.assignee || "غير مسند لشخص"}</p></div><div><TimingPill task={task} /></div></button>)}</div></div>;
   })}</section>;
 }

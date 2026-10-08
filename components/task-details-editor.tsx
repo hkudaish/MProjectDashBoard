@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { STATUS_COLORS } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type TaskDetail, type TaskStatus } from "@/lib/types";
 
 export function TaskDetailsEditor({ details, onChange, disabled }: {
@@ -22,7 +23,7 @@ export function TaskDetailsEditor({ details, onChange, disabled }: {
       <legend className="px-2 text-sm font-bold">تفاصيل المهمة</legend>
       <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200">
         <Table dir="rtl" aria-label="تفاصيل المهمة" className="min-w-[1000px] text-right">
-          <TableHeader className="bg-slate-50/60">
+          <TableHeader className="bg-teal-50/70 [&_th]:text-teal-900">
             <TableRow>
               <TableHead scope="col" className="w-12 text-center font-bold">م</TableHead>
               <TableHead scope="col" className="min-w-60 text-right font-bold">وصف المهمة</TableHead>
@@ -39,7 +40,7 @@ export function TaskDetailsEditor({ details, onChange, disabled }: {
               <TableRow key={detail.id}>
                 <TableCell className="text-center font-bold text-[#116d7b]">{index + 1}</TableCell>
                 <TableCell><Textarea rows={1} aria-label={`وصف المهمة التفصيلية ${index + 1}`} value={detail.description} maxLength={1200} onChange={(event) => updateDetail(detail.id, { description: event.target.value })} placeholder="اكتب وصف المهمة" className="h-11 min-h-11 resize-none field-sizing-fixed rounded-xl text-sm leading-6" /></TableCell>
-                <TableCell><Select dir="rtl" disabled={disabled} value={detail.status} onValueChange={(value) => updateDetail(detail.id, { status: value as TaskStatus })}><SelectTrigger aria-label={`حالة إنجاز المهمة التفصيلية ${index + 1}`} className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{Object.entries(STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></TableCell>
+                <TableCell><Select dir="rtl" disabled={disabled} value={detail.status} onValueChange={(value) => updateDetail(detail.id, { status: value as TaskStatus })}><SelectTrigger aria-label={`حالة إنجاز المهمة التفصيلية ${index + 1}`} className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[detail.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{Object.entries(STATUS_LABELS).map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value as TaskStatus].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></TableCell>
                 <TableCell><Input type="date" dir="ltr" aria-label={`تاريخ إنجاز المهمة التفصيلية ${index + 1}`} value={detail.completionDate} onChange={(event) => updateDetail(detail.id, { completionDate: event.target.value })} className="h-11 rounded-xl" /></TableCell>
                 <TableCell><Select dir="rtl" disabled={disabled} value={detail.ownerType} onValueChange={(value) => updateDetail(detail.id, { ownerType: value })}><SelectTrigger aria-label={`جهة المهمة التفصيلية ${index + 1}`} className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{Object.entries(OWNER_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></TableCell>
                 <TableCell><div className="relative"><UserRound className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input aria-label={`المسؤول المباشر عن المهمة التفصيلية ${index + 1}`} value={detail.assignee} maxLength={120} onChange={(event) => updateDetail(detail.id, { assignee: event.target.value })} placeholder="اسم الشخص المسؤول" className="h-11 rounded-xl pr-10" /></div></TableCell>
