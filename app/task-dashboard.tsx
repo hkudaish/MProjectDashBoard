@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CalendarDays,
@@ -567,11 +567,27 @@ export function TaskDashboard() {
               <div className="hidden lg:block">
                 <Table dir="rtl" className="text-right [&_td]:text-right [&_th]:text-right">
                   <TableHeader><TableRow className="bg-indigo-50/60 hover:bg-indigo-50/60 [&_th]:font-bold [&_th]:text-indigo-900"><TableHead className="w-[44%] px-5 text-right">المهمة</TableHead><TableHead className="text-right">الموعد</TableHead><TableHead className="text-right">المسؤول</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-right">الإنجاز</TableHead><TableHead className="w-14" /></TableRow></TableHeader>
-                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><ProductPill task={task} /><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}<TaskDetailsReport task={task} /></TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell><TableCell className="px-4">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell></TableRow>)}</TableBody>
+                  <TableBody>{filteredTasks.map((task) => (
+                    <Fragment key={task.id}>
+                      <TableRow className={task.details?.length ? "group border-b-0" : "group"}>
+                        <TableCell className="whitespace-normal px-5 py-4 align-top">
+                          <ProductPill task={task} />
+                          <p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>
+                          {task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}
+                        </TableCell>
+                        <TableCell className="pb-4 pt-12 align-top"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell>
+                        <TableCell className="pb-4 pt-12 align-top"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell>
+                        <TableCell className="pb-4 pt-12 align-top">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell>
+                        <TableCell className="pb-4 pt-12 align-top"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell>
+                        <TableCell className="px-4 pb-4 pt-12 align-top">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell>
+                      </TableRow>
+                      {!!task.details?.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="px-5 pb-5 pt-0"><TaskDetailsReport task={task} /></TableCell></TableRow>}
+                    </Fragment>
+                  ))}</TableBody>
                 </Table>
               </div>
 
-              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><TaskDetailsReport task={task} /><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div></button>)}</div>
+              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div><TaskDetailsReport task={task} /></button>)}</div>
               {!filteredTasks.length && <div className="px-6 py-16 text-center text-slate-500"><CircleDashed className="mx-auto mb-3 size-10" />لا توجد مهام مطابقة لمعايير البحث.</div>}
             </section>
           </TabsContent>
