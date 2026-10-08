@@ -17,7 +17,7 @@ export function TaskDetailsReport({ task, label = "تفاصيل المهمة", o
             <TableHead scope="col" className="min-w-36 border-b-2 border-emerald-300 bg-emerald-100 px-3 font-bold text-emerald-900">حالة الإنجاز</TableHead>
             <TableHead scope="col" className="min-w-36 border-b-2 border-sky-300 bg-sky-100 px-3 font-bold text-sky-900">تاريخ الإنجاز</TableHead>
             <TableHead scope="col" className="min-w-36 border-b-2 border-violet-300 bg-violet-100 px-3 font-bold text-violet-900">الجهة</TableHead>
-            <TableHead scope="col" className="min-w-36 border-b-2 border-amber-300 bg-amber-100 px-3 font-bold text-amber-900">المسؤول المباشر</TableHead>
+            <TableHead scope="col" className="min-w-36 border-b-2 border-amber-300 bg-amber-100 px-3 font-bold text-amber-900">المسؤول عن المهمة</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

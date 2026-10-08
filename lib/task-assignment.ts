@@ -1,6 +1,6 @@
 import { listUsers } from "./user-accounts";
 import { createEntityStore } from "./entity-store";
-import { isManager, subordinateUsers } from "./hierarchy";
+import { isManager, subordinateUsers, taskAssignableUsers } from "./hierarchy";
 import type { PublicUser, UserSession } from "./user-types";
 import type { Task, TaskDetail, TaskPermissions } from "./types";
 export class TaskPolicyError extends Error { constructor(message: string, public status = 403) { super(message); } }
@@ -29,7 +29,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
       if (!allowed.has(key) && (next[key] ?? "") !== (previous[key] ?? "")) throw new TaskPolicyError("صلاحيتك تقتصر على تحديث المهمة المسندة إليك أو الصفوف التابعة لك.");
     }
   }
-  const assignable = new Set((systemAdmin ? users : subordinateUsers(users, actor.email)).filter((user) => user.active && user.position).map((user) => user.email));
+  const assignable = new Set(taskAssignableUsers(users, actor).map((user) => user.email));
   const entities = await createEntityStore().getEntities();
   function owner(ownerType: string, previousOwner?: string) {
     if (ownerType === previousOwner || ownerType === "unassigned" || ownerType === "joint") return;
@@ -41,6 +41,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
       const target = users.find((user) => user.email === email);
       if (!target && email === old?.assigneeEmail) return { assigneeEmail: email, assignee: old.assignee };
       if (!target) throw new TaskPolicyError("المستخدم المحدد غير موجود.", 400);
+      if (target.position === "system_admin" && email !== old?.assigneeEmail) throw new TaskPolicyError("مدير النظام يدير النظام ولا يُدرج ضمن منفذي المهام.");
       if (email !== old?.assigneeEmail && (!target.active || !target.position || !assignable.has(email))) throw new TaskPolicyError("يمكن إسناد المهام إلى المستخدمين التابعين لك إداريًا فقط.");
       return { assigneeEmail: email, assignee: target.name };
     }

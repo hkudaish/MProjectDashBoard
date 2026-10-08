@@ -410,3 +410,39 @@ test("dual reporting requires a section head and a department manager and cannot
   assert.equal((await users.PATCH(request({email:"dual@example.com",position:"section_head",managerEmail:"department@example.com"},admin,"PATCH"))).status,400);
   assert.equal((await users.PATCH(request({email:"dual@example.com",position:"section_head",managerEmail:"department@example.com",additionalManagerEmail:null},admin,"PATCH"))).status,200);
 });
+
+test("task assignment lists exclude system directors and remain scoped to registered reporting relationships", async () => {
+  const admin=await adminCookie();await tree(admin);
+  await positioned(admin,"project@example.com","project_manager","admin@example.com");
+  await positioned(admin,"otherdepartment@example.com","department_manager","other@example.com");
+  const rootDirectory=await(await directory.GET(request(null,admin,"GET"))).json();
+  assert.ok(rootDirectory.assignableUsers.some(user=>user.email==="project@example.com"));
+  assert.ok(rootDirectory.assignableUsers.some(user=>user.email==="staff@example.com"));
+  assert.ok(rootDirectory.assignableUsers.every(user=>user.position!=="system_admin"));
+  assert.ok(!rootDirectory.assignableUsers.some(user=>user.email==="otherdepartment@example.com"));
+  const department=await personalCookie("department@example.com");const section=await personalCookie("section@example.com");const project=await personalCookie("project@example.com");const employee=await personalCookie("staff@example.com");
+  assert.deepEqual((await(await directory.GET(request(null,department,"GET"))).json()).assignableUsers.map(user=>user.email).sort(),["section@example.com","staff@example.com"]);
+  assert.deepEqual((await(await directory.GET(request(null,section,"GET"))).json()).assignableUsers.map(user=>user.email),["staff@example.com"]);
+  assert.deepEqual((await(await directory.GET(request(null,project,"GET"))).json()).assignableUsers,[]);
+  assert.deepEqual((await(await directory.GET(request(null,employee,"GET"))).json()).assignableUsers,[]);
+  assert.equal((await tasks.POST(request({...seed,assigneeEmail:"otherdepartment@example.com",assignee:""},admin))).status,403);
+});
+test("system directors cannot be selected as task or detail assignees even through direct API calls", async () => {
+  const admin=await adminCookie();await tree(admin);
+  const row={id:"root-row",description:"Forbidden root assignment",status:"not_started",completionDate:"",ownerType:"wamy",assignee:"",assigneeEmail:"admin@example.com"};
+  for(const email of ["admin@example.com","other@example.com"])assert.equal((await tasks.POST(request({...seed,assigneeEmail:email,assignee:""},admin))).status,403);
+  assert.equal((await tasks.POST(request({...seed,details:[row]},admin))).status,403);
+  assert.equal((await products.POST(request({name:"Root assigned product",details:[row]},admin))).status,403);
+  const created=await tasks.POST(request({...seed,assigneeEmail:"staff@example.com",assignee:""},admin));assert.equal(created.status,201);const task=(await created.json()).task;
+  assert.equal((await tasks.PATCH(request({id:task.id,assigneeEmail:"admin@example.com",assignee:""},admin,"PATCH"))).status,403);
+  assert.equal((await tasks.PATCH(request({id:task.id,details:[row]},admin,"PATCH"))).status,403);
+  assert.equal(data.get("tasks").value.find(item=>item.id===task.id).assigneeEmail,"staff@example.com");
+});
+test("the task assignee is independent of the user's administrative supervisor", async () => {
+  const admin=await adminCookie();await tree(admin);const section=await personalCookie("section@example.com");
+  const before=await accounts.findAccount("staff@example.com");
+  const created=await tasks.POST(request({...seed,assigneeEmail:"staff@example.com",assignee:""},section));assert.equal(created.status,201);const task=(await created.json()).task;
+  assert.equal(task.assigneeEmail,"staff@example.com");assert.notEqual(task.assigneeEmail,before.managerEmail);
+  assert.equal((await accounts.findAccount("staff@example.com")).managerEmail,before.managerEmail);
+  assert.equal((await tasks.PATCH(request({id:task.id,assigneeEmail:"department@example.com",assignee:""},section,"PATCH"))).status,403);
+});

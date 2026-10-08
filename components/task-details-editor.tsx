@@ -34,7 +34,7 @@ export function TaskDetailsEditor({ details, onChange, disabled, label = "تفا
               <TableHead scope="col" className="min-w-36 text-right font-bold">حالة الإنجاز</TableHead>
               <TableHead scope="col" className="min-w-40 text-right font-bold">تاريخ الإنجاز</TableHead>
               <TableHead scope="col" className="min-w-40 text-right font-bold">الجهة</TableHead>
-              <TableHead scope="col" className="min-w-44 text-right font-bold">المسؤول المباشر</TableHead>
+              <TableHead scope="col" className="min-w-44 text-right font-bold">المسؤول عن المهمة</TableHead>
               <TableHead scope="col" className="w-12 text-center font-bold">حذف</TableHead>
             </TableRow>
           </TableHeader>
@@ -54,6 +54,7 @@ export function TaskDetailsEditor({ details, onChange, disabled, label = "تفا
           </TableBody>
         </Table>
       </div>
+      <p className="text-xs leading-5 text-slate-500">المسؤول عن المهمة هو المستخدم المسند إليه تنفيذها. لا يغير الإسناد التبعية الإدارية.</p>
       <p className="text-xs leading-5 text-slate-500">يمكن تمرير الجدول أفقيًا لعرض جميع التفاصيل.</p>
       <Button type="button" variant="outline" disabled={disabled || !canAdd} className="h-11 justify-self-start rounded-xl text-[#116d7b]" onClick={() => onChange([...details, { id: crypto.randomUUID(), description: "", status: "not_started", completionDate: "", ownerType: "unassigned", assignee: "" }])}><Plus className="size-4" />إضافة مهمة تفصيلية</Button>
     </fieldset>

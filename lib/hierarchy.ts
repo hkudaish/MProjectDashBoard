@@ -28,3 +28,8 @@ export function supervisorChain(users: PublicUser[], managerEmail: string | null
   }
   return chain;
 }
+
+export function taskAssignableUsers(users: PublicUser[], actor: Pick<PublicUser, "email" | "position">): PublicUser[] {
+  if (!isManager(actor.position)) return [];
+  return subordinateUsers(users, actor.email).filter((user) => user.active && user.position && user.position !== "system_admin");
+}
