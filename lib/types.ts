@@ -41,4 +41,6 @@ export const OWNER_LABELS: Record<string, string> = {
   unassigned: "غير محدد",
 };
 
-export type Product = { id: string; name: string; target: string; description: string; details?: TaskDetail[] };
+export type Product = { id: string; projectId?: string; name: string; target: string; description: string; details?: TaskDetail[] };
+
+export type Project = { id: string; name: string; description: string };

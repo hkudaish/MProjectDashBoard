@@ -1,4 +1,4 @@
-import { taskInputSchema } from "@/lib/products";
+import { taskInputSchema, taskTitleSchema } from "@/lib/products";
 import { createProductStore } from "@/lib/product-store";
 import { DEFAULT_TASKS } from "@/lib/task-data";
 import { createTaskStore } from "@/lib/task-store";
@@ -28,7 +28,9 @@ async function readTasks() {
 export async function GET() {
   try {
     const { tasks } = await readTasks();
-    const sorted = tasks.map((task) => ({ ...task, progress: progressForStatus(task.status, task.progress) })).sort((a, b) =>
+    const products = await createProductStore().getProducts();
+    const productNames = new Map(products.map((p) => [p.id, p.name]));
+    const sorted = tasks.map((task) => ({ ...task, productName: productNames.get(task.productId) ?? task.productName, progress: progressForStatus(task.status, task.progress) })).sort((a, b) =>
       a.plannedDate.localeCompare(b.plannedDate) ||
       a.productId.localeCompare(b.productId) ||
       a.sourceOrder - b.sourceOrder
@@ -73,7 +75,11 @@ export async function PATCH(request: Request) {
     }
     if (typeof payload.assignee === "string") update.assignee = payload.assignee.trim().slice(0, 120);
     if (typeof payload.notes === "string") update.notes = payload.notes.trim().slice(0, 1200);
-    if (typeof payload.title === "string" && payload.title.trim()) update.title = payload.title.trim().slice(0, 600);
+    if ("title" in payload) {
+      const title = taskTitleSchema.safeParse(payload.title);
+      if (!title.success) return Response.json({ error: title.error.issues[0]?.message }, { status: 400 });
+      update.title = title.data;
+    }
 
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
     if (typeof payload.plannedDate === "string" && datePattern.test(payload.plannedDate)) update.plannedDate = payload.plannedDate;
@@ -84,6 +90,7 @@ export async function PATCH(request: Request) {
     if (index === -1) return Response.json({ error: "لم يتم العثور على المهمة." }, { status: 404 });
 
     const updated = { ...tasks[index], ...update } as Task;
+    updated.productName = (await createProductStore().getProducts()).find((p) => p.id === updated.productId)?.name ?? updated.productName;
     updated.progress = progressForStatus(updated.status, updated.progress);
     const nextTasks = [...tasks];
     nextTasks[index] = updated;

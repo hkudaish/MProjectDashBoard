@@ -9,13 +9,13 @@ export function createProductStore() {
   return {
     async getProducts(): Promise<Product[]> {
       const raw = store ? await store.get("products", { type: "json" }) : [...memory.values()];
-      const custom: Product[] = [];
+      const products = new Map<string, Product>(DEFAULT_PRODUCTS.map((product) => [product.id, product]));
       if (Array.isArray(raw)) for (const item of raw) {
         const parsed = productInputSchema.safeParse(item);
-        if (parsed.success && typeof item.id === "string" && item.id && !DEFAULT_PRODUCTS.some((p) => p.id === item.id))
-          custom.push({ id: item.id, ...parsed.data });
+        if (parsed.success && typeof item.id === "string" && item.id)
+          products.set(item.id, { id: item.id, ...parsed.data });
       }
-      return [...DEFAULT_PRODUCTS, ...custom];
+      return [...products.values()];
     },
     async setProducts(products: Product[]) {
       if (store) await store.setJSON("products", products);

@@ -45,6 +45,7 @@ const reset = await exports("app/api/auth/password-reset/route.ts");
 const session = await exports("app/api/auth/session/route.ts");
 const tasks = await exports("app/api/tasks/route.ts");
 const products = await exports("app/api/products/route.ts");
+const projects = await exports("app/api/projects/route.ts");
 const oldPassword = "LegacyPassword123";
 const personalPassword = "PersonalPassword456";
 const temporaryPassword = "TemporaryPassword789";
@@ -127,6 +128,8 @@ test("permission matrix permits editor data changes and restricts account admini
     const summary = await (await session.GET(request(null, userCookie, "GET"))).json();
     assert.equal(summary.authenticated, true); assert.equal(summary.role, role); assert.equal(summary.canManageUsers, false);
     assert.equal((await users.GET(request(null, userCookie, "GET"))).status, 403);
+    assert.equal((await projects.POST(request({ name: "مشروع ممنوع" }, userCookie))).status, 403);
+    assert.equal((await products.PATCH(request({ id: "digital", name: "تعديل ممنوع" }, userCookie, "PATCH"))).status, 403);
     assert.equal((await users.POST(request({ email: "forbidden@example.com", name: "ممنوع", role: "admin", password: temporaryPassword }, userCookie))).status, 403);
     assert.equal((await tasks.PATCH(request({ id: "task-1", status: "review" }, userCookie, "PATCH"))).status, role === "editor" ? 200 : 401);
     assert.equal((await products.POST(request({ name: "منتج المحرر" }, userCookie))).status, role === "editor" ? 201 : 401);

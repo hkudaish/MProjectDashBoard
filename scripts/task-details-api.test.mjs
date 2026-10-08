@@ -38,7 +38,7 @@ await productsModule.link((specifier) => {
 });
 await productsModule.evaluate();
 const imports = {
-  "@/lib/products": { taskInputSchema: productsModule.namespace.taskInputSchema },
+  "@/lib/products": { taskTitleSchema: productsModule.namespace.taskTitleSchema, taskInputSchema: productsModule.namespace.taskInputSchema },
   "@/lib/product-store": { createProductStore: () => ({ getProducts: async () => productsModule.namespace.DEFAULT_PRODUCTS }) },
   "@netlify/blobs": { getStore: () => store },
   "@/lib/admin-auth": { getAdminSession: async () => isAdmin ? { email: "admin@example.com" } : null },

@@ -2,6 +2,9 @@ import { z } from "zod";
 import { taskDetailsSchema } from "./task-details";
 import type { Product } from "./types";
 
+export const DEFAULT_PROJECT_ID = "media-project";
+export const taskTitleSchema = z.string().trim().min(1, "أدخل عنوان المهمة.").max(600);
+
 export const DEFAULT_PRODUCTS: Product[] = [
   { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", description: "" },
   { id: "infographic", name: "الإنفوجرافيك", target: "13 منشوراً", description: "" },
@@ -9,6 +12,7 @@ export const DEFAULT_PRODUCTS: Product[] = [
   { id: "report", name: "التقارير الاستراتيجية", target: "3 تقارير", description: "" },
 ];
 export const productInputSchema = z.object({
+  projectId: z.string().trim().min(1).max(120).default(DEFAULT_PROJECT_ID),
   name: z.string().trim().min(1, "أدخل اسم المنتج.").max(120),
   target: z.string().trim().max(120).default(""),
   description: z.string().trim().max(1200).default(""),
@@ -21,7 +25,7 @@ const date = z.string().refine((value) => {
 }, "أدخل تاريخًا صحيحًا.");
 export const taskInputSchema = z.object({
   productId: z.string().trim().min(1, "اختر المنتج."),
-  title: z.string().trim().min(1, "أدخل عنوان المهمة.").max(600),
+  title: taskTitleSchema,
   plannedDate: date, endDate: date,
   status: z.enum(["not_started", "in_progress", "review", "completed", "blocked"]).default("not_started"),
   progress: z.number().finite().min(0).max(100).default(0),

@@ -40,14 +40,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { UserAccountManager } from "@/components/user-account-manager";
 import { PasswordChangeDialog, PasswordResetRequestDialog } from "@/components/password-dialogs";
+import { DEFAULT_PROJECT, projectInputSchema } from "@/lib/projects";
 import { USER_ROLES, type SessionInfo } from "@/lib/user-types";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
 import { TaskDetailsReport } from "@/components/task-details-report";
-import { DEFAULT_PRODUCTS, productInputSchema, taskInputSchema } from "@/lib/products";
+import { DEFAULT_PRODUCTS, DEFAULT_PROJECT_ID, productInputSchema, taskInputSchema } from "@/lib/products";
 import { taskDetailsSchema } from "@/lib/task-details";
 import { progressForStatus } from "@/lib/task-progress";
 import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
-import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus, type Product } from "@/lib/types";
+import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus, type Product, type Project } from "@/lib/types";
 
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
 type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details">>;
@@ -103,6 +104,13 @@ async function requestProducts(): Promise<Product[]> {
   const data = await response.json() as { products: Product[]; error?: string };
   if (!response.ok) throw new Error(data.error || "تعذر تحميل المنتجات.");
   return data.products;
+}
+
+async function requestProjects(): Promise<Project[]> {
+  const response = await fetch("/api/projects", { cache: "no-store" });
+  const data = await response.json() as { projects: Project[]; error?: string };
+  if (!response.ok) throw new Error(data.error || "تعذر تحميل المشاريع.");
+  return data.projects;
 }
 
 function dateRange(task: Task) {
@@ -178,6 +186,12 @@ function LoadingView() {
 export function TaskDashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [products, setProducts] = useState<Product[]>(DEFAULT_PRODUCTS);
+  const [projects, setProjects] = useState<Project[]>([DEFAULT_PROJECT]);
+  const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECT_ID);
+  const [projectDraft, setProjectDraft] = useState<Omit<Project, "id"> | null>(null);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [projectSaving, setProjectSaving] = useState(false);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [creatingTask, setCreatingTask] = useState(false);
   const [productDraft, setProductDraft] = useState<Omit<Product, "id"> | null>(null);
   const [productSaving, setProductSaving] = useState(false);
@@ -211,9 +225,10 @@ export function TaskDashboard() {
 
   const loadTasks = useCallback(async () => {
     try {
-      const [loadedTasks, loadedProducts] = await Promise.all([requestTasks(), requestProducts()]);
+      const [loadedTasks, loadedProducts, loadedProjects] = await Promise.all([requestTasks(), requestProducts(), requestProjects()]);
       setTasks(loadedTasks);
       setProducts(loadedProducts);
+      setProjects(loadedProjects);
       setLoadError("");
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
@@ -229,8 +244,8 @@ export function TaskDashboard() {
 
   useEffect(() => {
     let current = true;
-    void Promise.all([requestTasks(), requestProducts()]).then(([loadedTasks, loadedProducts]) => {
-      if (current) { setTasks(loadedTasks); setProducts(loadedProducts); }
+    void Promise.all([requestTasks(), requestProducts(), requestProjects()]).then(([loadedTasks, loadedProducts, loadedProjects]) => {
+      if (current) { setTasks(loadedTasks); setProducts(loadedProducts); setProjects(loadedProjects); }
     }).catch((error: unknown) => {
       if (current) setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
     }).finally(() => {
@@ -324,7 +339,7 @@ export function TaskDashboard() {
     void Promise.resolve(context.registerTool({
       name: "list_project_tasks",
       title: "عرض مهام المشروع",
-      description: "يعرض مهام مشروع التواصل الاستراتيجي مع إمكانية التصفية بالمنتج أو الحالة.",
+      description: "يعرض مهام المشاريع الإعلامية مع إمكانية التصفية بالمنتج أو الحالة.",
       inputSchema: { type: "object", properties: { productId: { type: "string" }, status: { type: "string" } }, additionalProperties: false },
       annotations: { readOnlyHint: true, untrustedContentHint: false },
       execute(input: unknown) {
@@ -364,31 +379,58 @@ export function TaskDashboard() {
     return () => controller.abort();
   }, [persistTask]);
 
+  const currentProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
+  const visibleProducts = useMemo(() => products.filter((product) => (product.projectId ?? DEFAULT_PROJECT_ID) === activeProjectId), [products, activeProjectId]);
+  const projectTasks = useMemo(() => {
+    const ids = new Set(visibleProducts.map((product) => product.id));
+    return tasks.filter((task) => ids.has(task.productId));
+  }, [tasks, visibleProducts]);
+
+  function selectProject(id: string) {
+    setActiveProjectId(id); setProductFilter("all"); setStatusFilter("all"); setOwnerFilter("all"); setQuery("");
+  }
+
+  async function saveProject() {
+    if (!userSession?.canManageUsers || !projectDraft) return;
+    const parsed = projectInputSchema.safeParse(projectDraft);
+    if (!parsed.success) { toast.error(parsed.error.issues[0]?.message); return; }
+    setProjectSaving(true);
+    try {
+      const response = await fetch("/api/projects", { method: editingProjectId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...parsed.data, ...(editingProjectId ? { id: editingProjectId } : {}) }) });
+      const data = await response.json() as { project: Project; error?: string };
+      if (!response.ok) throw new Error(data.error || "تعذر حفظ المشروع.");
+      setProjects((current) => editingProjectId ? current.map((p) => p.id === data.project.id ? data.project : p) : [...current, data.project]);
+      selectProject(data.project.id); setProjectDraft(null); setEditingProjectId(null);
+      toast.success(editingProjectId ? "تم حفظ تعديلات المشروع." : "تم إنشاء المشروع. أضف منتجاته ثم مهامه.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ المشروع."); }
+    finally { setProjectSaving(false); }
+  }
+
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return tasks.filter((task) => {
+    return projectTasks.filter((task) => {
       const matchesText = !normalized || `${task.title} ${task.productName} ${task.assignee} ${task.notes} ${(task.details ?? []).map((detail) => `${detail.description} ${detail.assignee} ${OWNER_LABELS[detail.ownerType] ?? ""}`).join(" ")}`.toLowerCase().includes(normalized);
       return matchesText && (productFilter === "all" || task.productId === productFilter) && (statusFilter === "all" || task.status === statusFilter) && (ownerFilter === "all" || task.ownerType === ownerFilter);
     });
-  }, [tasks, query, productFilter, statusFilter, ownerFilter]);
+  }, [projectTasks, query, productFilter, statusFilter, ownerFilter]);
 
   const summary = useMemo(() => {
-    const completed = tasks.filter((task) => task.status === "completed").length;
-    const overdue = tasks.filter((task) => timingState(task) === "late").length;
-    const active = tasks.filter((task) => timingState(task) === "active").length;
-    const blocked = tasks.filter((task) => task.status === "blocked").length;
-    return { completed, overdue, active, blocked, overall: tasks.length ? Math.round(tasks.reduce((sum, task) => sum + task.progress, 0) / tasks.length) : 0 };
-  }, [tasks]);
+    const completed = projectTasks.filter((task) => task.status === "completed").length;
+    const overdue = projectTasks.filter((task) => timingState(task) === "late").length;
+    const active = projectTasks.filter((task) => timingState(task) === "active").length;
+    const blocked = projectTasks.filter((task) => task.status === "blocked").length;
+    return { completed, overdue, active, blocked, overall: projectTasks.length ? Math.round(projectTasks.reduce((sum, task) => sum + task.progress, 0) / projectTasks.length) : 0 };
+  }, [projectTasks]);
 
-  const attentionTasks = useMemo(() => tasks
+  const attentionTasks = useMemo(() => projectTasks
     .filter((task) => timingState(task) === "late" || timingState(task) === "active" || task.status === "blocked")
     .sort((a, b) => parseDate(a.endDate).getTime() - parseDate(b.endDate).getTime())
-    .slice(0, 6), [tasks]);
+    .slice(0, 6), [projectTasks]);
 
-  const upcomingTasks = useMemo(() => tasks
+  const upcomingTasks = useMemo(() => projectTasks
     .filter((task) => ["soon", "upcoming"].includes(timingState(task)))
     .sort((a, b) => parseDate(a.plannedDate).getTime() - parseDate(b.plannedDate).getTime())
-    .slice(0, 6), [tasks]);
+    .slice(0, 6), [projectTasks]);
 
   function openTask(task: Task) {
     if (!isAdmin) return;
@@ -397,7 +439,7 @@ export function TaskDashboard() {
     setDraft({ ...task, details: (task.details ?? []).map((detail) => ({ ...detail })) });
   }
 
-  function newTask(productId = products[0]?.id ?? "") {
+  function newTask(productId = visibleProducts[0]?.id ?? "") {
     if (!isAdmin) return;
     const date = new Date();
     const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -408,17 +450,19 @@ export function TaskDashboard() {
   }
 
   async function saveProduct() {
-    if (!isAdmin || !productDraft) return;
+    if (!isAdmin || !productDraft || editingProductId && !userSession?.canManageUsers) return;
     const parsed = productInputSchema.safeParse(productDraft);
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message); return; }
     setProductSaving(true);
     try {
-      const response = await fetch("/api/products", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed.data) });
+      const response = await fetch("/api/products", { method: editingProductId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...parsed.data, ...(editingProductId ? { id: editingProductId } : {}) }) });
       const data = await response.json() as { product: Product; error?: string };
       if (!response.ok) throw new Error(data.error || "تعذر إضافة المنتج.");
-      setProducts((current) => [...current, data.product]);
+      setProducts((current) => editingProductId ? current.map((p) => p.id === data.product.id ? data.product : p) : [...current, data.product]);
+      if (editingProductId) setTasks((current) => current.map((task) => task.productId === data.product.id ? { ...task, productName: data.product.name } : task));
+      setEditingProductId(null);
       setProductDraft(null);
-      toast.success("تمت إضافة المنتج. يمكنك الآن إضافة مهامه.");
+      toast.success(editingProductId ? "تم حفظ تعديلات المنتج." : "تمت إضافة المنتج. يمكنك الآن إضافة مهامه.");
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إضافة المنتج."); }
     finally { setProductSaving(false); }
   }
@@ -494,7 +538,7 @@ export function TaskDashboard() {
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#116d7b] text-white shadow-[0_8px_24px_rgba(17,109,123,.2)]"><ListChecks className="size-6" /></div>
             <div className="min-w-0">
-              <h1 className="truncate text-lg font-black sm:text-xl">متابعة منتجات التواصل الاستراتيجي</h1>
+              <h1 className="truncate text-lg font-black sm:text-xl">متابعة منتجات المشروع الإعلامي</h1>
               <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">خطة التنفيذ للجزء الأول - ثلاثة أشهر</p>
             </div>
           </div>
@@ -512,20 +556,24 @@ export function TaskDashboard() {
       </header>
 
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-8 sm:py-8">
+        <section aria-label="اختيار المشروع" className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-teal-100 bg-white p-4 shadow-sm">
+          <label className="grid min-w-60 flex-1 gap-2 text-sm font-bold text-teal-900">المشروع<Select dir="rtl" value={activeProjectId} onValueChange={selectProject}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></label>
+          {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus />إضافة مشروع</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description }); } }}><Pencil />تعديل المشروع</Button></>}
+          {currentProject?.description && <p className="w-full whitespace-pre-wrap text-sm leading-6 text-slate-500">{currentProject.description}</p>}
+        </section>
         {isAdmin && <div className="mb-5 flex flex-wrap gap-3">
-          <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => setProductDraft({ name: "", target: "", description: "", details: [] })}><Plus />إضافة منتج</Button>
-          <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" onClick={() => newTask()}><Plus />إضافة مهمة</Button>
+          <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus />إضافة منتج</Button>
+          <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" disabled={!visibleProducts.length} onClick={() => newTask()}><Plus />إضافة مهمة</Button>
         </div>}
         <section className="mb-6 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
           <div>
-            <p className="text-sm font-bold text-[#116d7b]">لوحة التنفيذ</p>
-            <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">صورة واضحة لما أُنجز وما يحتاج تدخلاً</h2>
+            <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">لوحة المعلومات ومتابعة الإنجاز</h2>
           </div>
           <div className="flex items-center gap-2 text-sm text-slate-500"><CalendarDays className="size-4" /> اليوم: {new Intl.DateTimeFormat("ar-SA", { dateStyle: "long" }).format(new Date())}</div>
         </section>
 
         <section aria-label="ملخص الأداء" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="إجمالي المهام" value={tasks.length} note={`ضمن ${products.length} منتجات`} icon={ListChecks} tone="teal" />
+          <MetricCard label="إجمالي المهام" value={projectTasks.length} note={`ضمن ${visibleProducts.length} منتجات`} icon={ListChecks} tone="teal" />
           <MetricCard label="المهام المكتملة" value={summary.completed} note={`${summary.overall}% متوسط الإنجاز`} icon={CheckCircle2} tone="green" />
           <MetricCard label="قيد الاستحقاق" value={summary.active} note="مهام ضمن فترتها الآن" icon={Clock3} tone="amber" />
           <MetricCard label="تحتاج تدخلاً" value={summary.overdue + summary.blocked} note={`${summary.overdue} متأخرة · ${summary.blocked} متعثرة`} icon={AlertTriangle} tone="red" />
@@ -558,15 +606,16 @@ export function TaskDashboard() {
               <section className="rounded-3xl bg-[#0f3440] p-6 text-white shadow-[0_18px_60px_rgba(15,52,64,.18)]">
                 <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-bold text-cyan-200">التقدم العام</p><p className="mt-2 text-5xl font-black tabular-nums">{summary.overall}%</p></div><div className="grid size-12 place-items-center rounded-2xl bg-white/10"><Check className="size-6" /></div></div>
                 <div className="mt-6 h-3 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-l from-[#32c6c8] to-[#78e2c4] transition-all" style={{ width: `${summary.overall}%` }} /></div>
-                <div className="mt-7 grid grid-cols-2 gap-3 border-t border-white/10 pt-5"><div><p className="text-2xl font-black">{summary.completed}</p><p className="text-sm text-slate-300">مهمة مكتملة</p></div><div><p className="text-2xl font-black">{tasks.length - summary.completed}</p><p className="text-sm text-slate-300">مهمة متبقية</p></div></div>
+                <div className="mt-7 grid grid-cols-2 gap-3 border-t border-white/10 pt-5"><div><p className="text-2xl font-black">{summary.completed}</p><p className="text-sm text-slate-300">مهمة مكتملة</p></div><div><p className="text-2xl font-black">{projectTasks.length - summary.completed}</p><p className="text-sm text-slate-300">مهمة متبقية</p></div></div>
                 <div className="mt-6 rounded-2xl bg-white/7 p-4 text-sm leading-7 text-slate-200">تُحسب النسبة بمتوسط إنجاز المهام: لم يبدأ 0%، قيد التنفيذ 50%، بانتظار المراجعة 80%، مكتمل 100%. يحتفظ المتعثر بآخر نسبة إنجاز له.</div>
               </section>
             </div>
 
             <section>
               <div className="mb-3"><h3 className="flex items-center gap-2 text-lg font-black text-teal-900"><Images aria-hidden="true" className="size-5 text-teal-700" />المنتجات</h3><p className="mt-1 text-sm text-slate-500">تقدم كل مسار وفق مهامه المسندة</p></div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{products.map((product) => {
-                const productTasks = tasks.filter((task) => task.productId === product.id);
+              {!visibleProducts.length && <p className="rounded-2xl border border-dashed border-teal-200 bg-teal-50/40 p-6 text-sm leading-7 text-slate-600">لم تُضف منتجات لهذا المشروع بعد.{isAdmin && " ابدأ بإضافة منتج، ثم أضف مهامه."}</p>}
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{visibleProducts.map((product) => {
+                const productTasks = projectTasks.filter((task) => task.productId === product.id);
                 const progress = productTasks.length ? Math.round(productTasks.reduce((sum, task) => sum + task.progress, 0) / productTasks.length) : 0;
                 const late = productTasks.filter((task) => timingState(task) === "late").length;
                 const Icon = PRODUCT_ICONS.find((item) => item.id === product.id)?.icon ?? ListChecks;
@@ -579,6 +628,7 @@ export function TaskDashboard() {
                 </button>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {(product.description || product.details?.length) && <Button variant="outline" size="sm" onClick={() => setViewingProduct(product)}>تفاصيل المنتج</Button>}
+                  {userSession?.canManageUsers && <Button variant="outline" size="sm" onClick={() => { setEditingProductId(product.id); setProductDraft({ ...product, details: (product.details ?? []).map((detail) => ({ ...detail })) }); }}><Pencil />تعديل المنتج</Button>}
                   {isAdmin && <Button variant="outline" size="sm" onClick={() => newTask(product.id)}><Plus />إضافة مهمة</Button>}
                 </div>
                 </article>;
@@ -596,11 +646,11 @@ export function TaskDashboard() {
               <div className="border-b border-indigo-100 bg-gradient-to-l from-indigo-50/70 to-white p-4 sm:p-5">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_210px_190px_190px]">
                   <div className="relative"><Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ابحث في المهام أو المسؤولين..." className="h-11 rounded-xl border-slate-200 pr-10" /></div>
-                  <FilterSelect value={productFilter} onValueChange={setProductFilter} placeholder="كل المنتجات" options={[{ value: "all", label: "كل المنتجات" }, ...products.map((product) => ({ value: product.id, label: product.name }))]} />
+                  <FilterSelect value={productFilter} onValueChange={setProductFilter} placeholder="كل المنتجات" options={[{ value: "all", label: "كل المنتجات" }, ...visibleProducts.map((product) => ({ value: product.id, label: product.name }))]} />
                   <FilterSelect value={statusFilter} onValueChange={setStatusFilter} placeholder="كل الحالات" options={[{ value: "all", label: "كل الحالات" }, ...STATUS_OPTIONS.map(([value, label]) => ({ value, label }))]} />
                   <FilterSelect value={ownerFilter} onValueChange={setOwnerFilter} placeholder="كل الجهات" options={[{ value: "all", label: "كل الجهات" }, ...OWNER_OPTIONS.map(([value, label]) => ({ value, label }))]} />
                 </div>
-                <p className="mt-3 text-sm text-slate-500">عرض {filteredTasks.length} من {tasks.length} مهمة</p>
+                <p className="mt-3 text-sm text-slate-500">عرض {filteredTasks.length} من {projectTasks.length} مهمة</p>
               </div>
 
               <div className="hidden lg:block">
@@ -632,7 +682,7 @@ export function TaskDashboard() {
           </TabsContent>
 
           <TabsContent value="timeline" className="mt-5">
-            <Timeline tasks={tasks} onOpen={openTask} />
+            <Timeline tasks={projectTasks} onOpen={openTask} />
           </TabsContent>
         </Tabs>
       </div>
@@ -655,16 +705,23 @@ export function TaskDashboard() {
       <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 
-      <Dialog open={!!productDraft && isAdmin} onOpenChange={(open) => { if (!open && !productSaving) setProductDraft(null); }}>
+      <Dialog open={!!projectDraft && Boolean(userSession?.canManageUsers)} onOpenChange={(open) => { if (!open && !projectSaving) { setProjectDraft(null); setEditingProjectId(null); } }}>
+        <DialogContent dir="rtl" className="rounded-3xl text-right sm:max-w-lg"><DialogHeader className="text-right sm:text-right"><DialogTitle>{editingProjectId ? "تعديل المشروع" : "إضافة مشروع جديد"}</DialogTitle><DialogDescription>لكل مشروع منتجاته ومهامه. اختر المشروع من القائمة لمتابعة إنجازه وإدارة محتواه.</DialogDescription></DialogHeader>
+          {projectDraft && <fieldset disabled={projectSaving} className="grid gap-4"><label className="grid gap-2 text-sm font-bold">اسم المشروع<Input maxLength={120} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">وصف المشروع<Textarea maxLength={1200} value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} className="rounded-xl" /></label></fieldset>}
+          <DialogFooter><Button disabled={projectSaving} onClick={() => void saveProject()}>{projectSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProjectId ? "حفظ التعديلات" : "إنشاء المشروع"}</Button><Button variant="outline" disabled={projectSaving} onClick={() => { setProjectDraft(null); setEditingProjectId(null); }}>إلغاء</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!productDraft && isAdmin} onOpenChange={(open) => { if (!open && !productSaving) { setProductDraft(null); setEditingProductId(null); } }}>
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl text-right sm:max-w-6xl">
-          <DialogHeader className="text-right sm:text-right"><DialogTitle>إضافة منتج جديد</DialogTitle><DialogDescription>أدخل اسم المنتج والمستهدف ووصفه، وأضف صفوف التفاصيل المناسبة.</DialogDescription></DialogHeader>
+          <DialogHeader className="text-right sm:text-right"><DialogTitle>{editingProductId ? "تعديل المنتج" : "إضافة منتج جديد"}</DialogTitle><DialogDescription>أدخل اسم المنتج والمستهدف ووصفه، وأضف صفوف التفاصيل المناسبة.</DialogDescription></DialogHeader>
           {productDraft && <fieldset disabled={productSaving} className="grid gap-5">
             <label className="grid gap-2 text-sm font-bold">اسم المنتج<Input maxLength={120} className="h-11 rounded-xl" value={productDraft.name} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} /></label>
             <label className="grid gap-2 text-sm font-bold">المستهدف<Input maxLength={120} placeholder="مثل: 10 تقارير" className="h-11 rounded-xl" value={productDraft.target} onChange={(e) => setProductDraft({ ...productDraft, target: e.target.value })} /></label>
             <label className="grid gap-2 text-sm font-bold">وصف المنتج<Textarea maxLength={1200} className="rounded-xl" value={productDraft.description} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} /></label>
             <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} label="تفاصيل المنتج" onChange={(details) => setProductDraft({ ...productDraft, details })} />
           </fieldset>}
-          <DialogFooter><Button disabled={productSaving} onClick={() => void saveProduct()}>{productSaving ? <Loader2 className="animate-spin" /> : <Check />}إضافة المنتج</Button><Button variant="outline" disabled={productSaving} onClick={() => setProductDraft(null)}>إلغاء</Button></DialogFooter>
+          <DialogFooter><Button disabled={productSaving} onClick={() => void saveProduct()}>{productSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProductId ? "حفظ التعديلات" : "إضافة المنتج"}</Button><Button variant="outline" disabled={productSaving} onClick={() => { setProductDraft(null); setEditingProductId(null); }}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={!!viewingProduct} onOpenChange={(open) => { if (!open) setViewingProduct(null); }}>
@@ -678,7 +735,7 @@ export function TaskDashboard() {
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl border-slate-200 text-right [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4 sm:max-w-6xl">
           <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">{creatingTask ? "إضافة مهمة جديدة" : "تحديث المهمة"}</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
           {draft && <div className="grid gap-5 py-2">
-            {creatingTask && <label className="grid gap-2 text-sm font-bold">المنتج<Select dir="rtl" value={draft.productId} disabled={saving} onValueChange={(productId) => setDraft({ ...draft, productId, productName: products.find((p) => p.id === productId)?.name ?? "" })}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="اختر المنتج" /></SelectTrigger><SelectContent dir="rtl">{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>)}</SelectContent></Select></label>}
+            {creatingTask && <label className="grid gap-2 text-sm font-bold">المنتج<Select dir="rtl" value={draft.productId} disabled={saving} onValueChange={(productId) => setDraft({ ...draft, productId, productName: products.find((p) => p.id === productId)?.name ?? "" })}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="اختر المنتج" /></SelectTrigger><SelectContent dir="rtl">{visibleProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>)}</SelectContent></Select></label>}
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
             {isAdmin && <TaskDetailsEditor details={draft.details ?? []} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />}
             <div className="grid gap-4 sm:grid-cols-2">

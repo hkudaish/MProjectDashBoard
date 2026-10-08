@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "متابعة منتجات التواصل الاستراتيجي",
-  description: "لوحة متابعة إسناد وتنفيذ منتجات عقد وامي للتواصل الاستراتيجي.",
+  title: "متابعة منتجات المشروع الإعلامي",
+  description: "لوحة المعلومات ومتابعة إنجاز المشاريع الإعلامية ومنتجاتها ومهامها.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
