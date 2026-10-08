@@ -7,17 +7,17 @@ export function TaskDetailsReport({ task }: { task: Task }) {
   if (!task.details?.length) return null;
 
   return (
-    <section aria-label="تفاصيل المهمة" className="mt-3 min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm">
-      <h4 className="border-b border-teal-100 bg-teal-50/70 px-3 py-2 font-bold text-teal-900">تفاصيل المهمة</h4>
+    <section aria-label="تفاصيل المهمة" className="mt-3 min-w-0 overflow-hidden rounded-xl border border-teal-200 bg-white text-sm">
+      <h4 className="border-b border-teal-900 bg-teal-800 px-3 py-3 font-black text-white">تفاصيل المهمة</h4>
       <Table dir="rtl" aria-label={`تفاصيل المهمة: ${task.title}`} className="min-w-[760px] text-right [&_th]:text-right [&_td]:text-right">
-        <TableHeader className="bg-slate-50/70">
+        <TableHeader>
           <TableRow>
-            <TableHead scope="col" className="w-10 px-3 font-bold">م</TableHead>
-            <TableHead scope="col" className="min-w-48 px-3 font-bold">وصف المهمة</TableHead>
-            <TableHead scope="col" className="min-w-36 px-3 font-bold">حالة الإنجاز</TableHead>
-            <TableHead scope="col" className="min-w-36 px-3 font-bold">تاريخ الإنجاز</TableHead>
-            <TableHead scope="col" className="min-w-36 px-3 font-bold">الجهة</TableHead>
-            <TableHead scope="col" className="min-w-36 px-3 font-bold">المسؤول المباشر</TableHead>
+            <TableHead scope="col" className="w-10 border-b-2 border-slate-300 bg-slate-100 px-3 font-bold text-slate-900">م</TableHead>
+            <TableHead scope="col" className="min-w-48 border-b-2 border-teal-300 bg-teal-100 px-3 font-bold text-teal-900">وصف المهمة</TableHead>
+            <TableHead scope="col" className="min-w-36 border-b-2 border-emerald-300 bg-emerald-100 px-3 font-bold text-emerald-900">حالة الإنجاز</TableHead>
+            <TableHead scope="col" className="min-w-36 border-b-2 border-sky-300 bg-sky-100 px-3 font-bold text-sky-900">تاريخ الإنجاز</TableHead>
+            <TableHead scope="col" className="min-w-36 border-b-2 border-violet-300 bg-violet-100 px-3 font-bold text-violet-900">الجهة</TableHead>
+            <TableHead scope="col" className="min-w-36 border-b-2 border-amber-300 bg-amber-100 px-3 font-bold text-amber-900">المسؤول المباشر</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
