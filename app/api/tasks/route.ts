@@ -1,3 +1,5 @@
+import { taskInputSchema } from "@/lib/products";
+import { createProductStore } from "@/lib/product-store";
 import { DEFAULT_TASKS } from "@/lib/task-data";
 import { createTaskStore } from "@/lib/task-store";
 import { getAdminSession } from "@/lib/admin-auth";
@@ -92,4 +94,20 @@ export async function PATCH(request: Request) {
     const message = error instanceof Error ? error.message : "حدث خطأ غير متوقع";
     return Response.json({ error: message }, { status: 500 });
   }
+}
+
+export async function POST(request: Request) {
+  if (!(await getAdminSession(request.headers))) return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول." }, { status: 401 });
+  const parsed = taskInputSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
+  try {
+    const product = (await createProductStore().getProducts()).find((item) => item.id === parsed.data.productId);
+    if (!product) return Response.json({ error: "المنتج المحدد غير موجود." }, { status: 400 });
+    const { store, tasks } = await readTasks();
+    const task: Task = { ...parsed.data, id: crypto.randomUUID(), productName: product.name,
+      progress: progressForStatus(parsed.data.status, parsed.data.progress),
+      sourceOrder: Math.max(0, ...tasks.map((item) => item.sourceOrder)) + 1, updatedAt: new Date().toISOString() };
+    await store.setTasks([...tasks, task]);
+    return Response.json({ task }, { status: 201 });
+  } catch { return Response.json({ error: "تعذر حفظ المهمة." }, { status: 500 }); }
 }

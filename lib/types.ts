@@ -40,3 +40,5 @@ export const OWNER_LABELS: Record<string, string> = {
   joint: "مسؤولية مشتركة",
   unassigned: "غير محدد",
 };
+
+export type Product = { id: string; name: string; target: string; description: string; details?: TaskDetail[] };

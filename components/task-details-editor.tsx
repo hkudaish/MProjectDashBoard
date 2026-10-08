@@ -9,10 +9,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { STATUS_COLORS } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type TaskDetail, type TaskStatus } from "@/lib/types";
 
-export function TaskDetailsEditor({ details, onChange, disabled }: {
+export function TaskDetailsEditor({ details, onChange, disabled, label = "تفاصيل المهمة" }: {
   details: TaskDetail[];
   onChange: (details: TaskDetail[]) => void;
   disabled: boolean;
+  label?: string;
 }) {
   function updateDetail(id: string, patch: Partial<TaskDetail>) {
     onChange(details.map((detail) => detail.id === id ? { ...detail, ...patch } : detail));
@@ -20,9 +21,9 @@ export function TaskDetailsEditor({ details, onChange, disabled }: {
 
   return (
     <fieldset disabled={disabled} className="grid min-w-0 gap-4 rounded-2xl border border-slate-200 p-4">
-      <legend className="px-2 text-sm font-bold">تفاصيل المهمة</legend>
+      <legend className="px-2 text-sm font-bold">{label}</legend>
       <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200">
-        <Table dir="rtl" aria-label="تفاصيل المهمة" className="min-w-[1000px] text-right">
+        <Table dir="rtl" aria-label={label} className="min-w-[1000px] text-right">
           <TableHeader className="bg-teal-50/70 [&_th]:text-teal-900">
             <TableRow>
               <TableHead scope="col" className="w-12 text-center font-bold">م</TableHead>

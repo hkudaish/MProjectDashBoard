@@ -55,8 +55,9 @@ function normaliseTask(raw: unknown): Task | null {
   };
 }
 
+const map = new Map<string, string>();
+
 function createFallbackStore(): TaskStore {
-  const map = new Map<string, string>();
 
   return {
     async getTasks() {

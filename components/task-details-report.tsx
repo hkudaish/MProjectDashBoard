@@ -3,13 +3,13 @@ import { progressForStatus } from "@/lib/task-progress";
 import { STATUS_COLORS } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task } from "@/lib/types";
 
-export function TaskDetailsReport({ task }: { task: Task }) {
+export function TaskDetailsReport({ task, label = "تفاصيل المهمة" }: { task: Pick<Task, "title" | "details">; label?: string }) {
   if (!task.details?.length) return null;
 
   return (
-    <section aria-label="تفاصيل المهمة" className="mt-3 min-w-0 overflow-hidden rounded-xl border border-teal-200 bg-white text-sm">
-      <h4 className="border-b border-teal-900 bg-teal-800 px-3 py-3 font-black text-white">تفاصيل المهمة</h4>
-      <Table dir="rtl" aria-label={`تفاصيل المهمة: ${task.title}`} className="min-w-[760px] text-right [&_th]:text-right [&_td]:text-right">
+    <section aria-label={label} className="mt-3 min-w-0 overflow-hidden rounded-xl border border-teal-200 bg-white text-sm">
+      <h4 className="border-b border-teal-900 bg-teal-800 px-3 py-3 font-black text-white">{label}</h4>
+      <Table dir="rtl" aria-label={`${label}: ${task.title}`} className="min-w-[760px] text-right [&_th]:text-right [&_td]:text-right">
         <TableHeader>
           <TableRow>
             <TableHead scope="col" className="w-10 border-b-2 border-slate-300 bg-slate-100 px-3 font-bold text-slate-900">م</TableHead>

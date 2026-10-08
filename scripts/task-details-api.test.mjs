@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { beforeEach, test } from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import { createRequire } from "node:module";
 import { taskDetailsSchema } from "../lib/task-details.ts";
 import { progressForStatus } from "../lib/task-progress.ts";
 
@@ -26,7 +27,19 @@ const store = {
 };
 process.env.NODE_ENV = "production";
 delete process.env.TASK_STORE_MODE;
+const productsModule = new vm.SourceTextModule(ts.transpileModule(readFileSync(new URL("../lib/products.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText);
+await productsModule.link((specifier) => {
+  const values = specifier === "zod" ? { z: createRequire(import.meta.url)("zod").z } : { taskDetailsSchema };
+  return new vm.SyntheticModule(Object.keys(values), function () {
+    for (const [key, value] of Object.entries(values)) this.setExport(key, value);
+  });
+});
+await productsModule.evaluate();
 const imports = {
+  "@/lib/products": { taskInputSchema: productsModule.namespace.taskInputSchema },
+  "@/lib/product-store": { createProductStore: () => ({ getProducts: async () => productsModule.namespace.DEFAULT_PRODUCTS }) },
   "@netlify/blobs": { getStore: () => store },
   "@/lib/admin-auth": { getAdminSession: async () => isAdmin ? { email: "admin@example.com" } : null },
   "@/lib/task-data": { DEFAULT_TASKS: [legacyTask] },
@@ -58,7 +71,7 @@ await route.link((specifier) => {
   });
 });
 await route.evaluate();
-const { GET, PATCH } = route.namespace;
+const { GET, PATCH, POST } = route.namespace;
 function patch(payload) {
   return PATCH(new Request("https://example.com/api/tasks", {
     method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -141,4 +154,31 @@ test("blocked tasks keep their last progress and unrelated edits keep the correc
   assert.equal((await (await patch({ progress: 65 })).json()).task.progress, 65);
   await patch({ status: "in_progress" });
   assert.equal((await (await patch({ notes: "Update only notes", progress: 99 })).json()).task.progress, 50);
+});
+
+function createTask(payload) {
+  return POST(new Request("https://example.com/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }));
+}
+test("non-admin cannot create tasks", async () => {
+  isAdmin = false;
+  assert.equal((await createTask(legacyTask)).status, 401);
+  assert.equal(reads, 0); assert.equal(writes, 0);
+});
+test("create supports every existing product and persists details without changing existing tasks", async () => {
+  for (const product of productsModule.namespace.DEFAULT_PRODUCTS) {
+    const response = await createTask({ ...legacyTask, productId: product.id, productName: "forged", id: "forged", status: "review", progress: 15, details });
+    assert.equal(response.status, 201);
+    const task = (await response.json()).task;
+    assert.notEqual(task.id, "forged"); assert.equal(task.productName, product.name);
+    assert.equal(task.progress, 80); assert.deepEqual(task.details, details);
+    assert.deepEqual((await (await GET()).json()).tasks.find((t) => t.id === task.id).details, details);
+  }
+  assert.deepEqual(persisted[0], legacyTask);
+  assert.equal(new Set(persisted.map((t) => t.id)).size, 5);
+});
+test("invalid creation rejects unknown products, blank titles, invalid dates and reversed ranges", async () => {
+  for (const change of [{ productId: "missing" }, { title: "  " }, { plannedDate: "2026-02-30" }, { endDate: "2026-08-26" }, { details: [{ ...details[0], description: "" }] }]) {
+    assert.equal((await createTask({ ...legacyTask, ...change })).status, 400);
+    assert.equal(writes, 0);
+  }
 });

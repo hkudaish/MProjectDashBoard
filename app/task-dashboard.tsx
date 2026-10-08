@@ -18,6 +18,7 @@ import {
   ListChecks,
   Loader2,
   Pencil,
+  Plus,
   RefreshCw,
   Search,
   Sparkles,
@@ -38,15 +39,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
 import { TaskDetailsReport } from "@/components/task-details-report";
+import { DEFAULT_PRODUCTS, productInputSchema, taskInputSchema } from "@/lib/products";
 import { taskDetailsSchema } from "@/lib/task-details";
 import { progressForStatus } from "@/lib/task-progress";
 import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
-import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus } from "@/lib/types";
+import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus, type Product } from "@/lib/types";
 
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
 type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details">>;
 
-const PRODUCTS = [
+const PRODUCT_ICONS = [
   { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", icon: Images },
   { id: "infographic", name: "الإنفوجرافيك", target: "13 منشوراً", icon: Sparkles },
   { id: "film", name: "الأفلام التوعوية", target: "3 أفلام", icon: Film },
@@ -90,6 +92,13 @@ async function requestTasks() {
   const data = await response.json() as { tasks?: Task[]; error?: string };
   if (!response.ok) throw new Error(data.error || "تعذر تحميل المهام.");
   return (data.tasks ?? []).map((task) => ({ ...task, progress: progressForStatus(task.status, task.progress) }));
+}
+
+async function requestProducts(): Promise<Product[]> {
+  const response = await fetch("/api/products", { cache: "no-store" });
+  const data = await response.json() as { products: Product[]; error?: string };
+  if (!response.ok) throw new Error(data.error || "تعذر تحميل المنتجات.");
+  return data.products;
 }
 
 function dateRange(task: Task) {
@@ -138,7 +147,7 @@ function StatusPill({ status }: { status: TaskStatus }) {
 
 function ProductPill({ task }: { task: Task }) {
   const colors = productColors(task.productId);
-  const Icon = PRODUCTS.find((product) => product.id === task.productId)?.icon ?? ListChecks;
+  const Icon = PRODUCT_ICONS.find((product) => product.id === task.productId)?.icon ?? ListChecks;
   return <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 text-sm font-bold" style={{ color: colors.ink, backgroundColor: colors.surface, borderColor: colors.border }}><Icon aria-hidden="true" className="size-3.5 shrink-0" /><span>{task.productName}</span></span>;
 }
 
@@ -164,6 +173,11 @@ function LoadingView() {
 
 export function TaskDashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [products, setProducts] = useState<Product[]>(DEFAULT_PRODUCTS);
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [productDraft, setProductDraft] = useState<Omit<Product, "id"> | null>(null);
+  const [productSaving, setProductSaving] = useState(false);
+  const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [authConfigured, setAuthConfigured] = useState(false);
@@ -194,7 +208,9 @@ export function TaskDashboard() {
 
   const loadTasks = useCallback(async () => {
     try {
-      setTasks(await requestTasks());
+      const [loadedTasks, loadedProducts] = await Promise.all([requestTasks(), requestProducts()]);
+      setTasks(loadedTasks);
+      setProducts(loadedProducts);
       setLoadError("");
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
@@ -210,8 +226,8 @@ export function TaskDashboard() {
 
   useEffect(() => {
     let current = true;
-    void requestTasks().then((loadedTasks) => {
-      if (current) setTasks(loadedTasks);
+    void Promise.all([requestTasks(), requestProducts()]).then(([loadedTasks, loadedProducts]) => {
+      if (current) { setTasks(loadedTasks); setProducts(loadedProducts); }
     }).catch((error: unknown) => {
       if (current) setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
     }).finally(() => {
@@ -268,6 +284,7 @@ export function TaskDashboard() {
       setIsAdmin(false);
       setAdminEmail("");
       setEditing(null);
+      setCreatingTask(false);
       setDraft(null);
       toast.success("تم تسجيل الخروج");
     } catch (error) {
@@ -402,12 +419,43 @@ export function TaskDashboard() {
 
   function openTask(task: Task) {
     if (!isAdmin) return;
+    setCreatingTask(false);
     setEditing(task);
     setDraft({ ...task, details: (task.details ?? []).map((detail) => ({ ...detail })) });
   }
 
+  function newTask(productId = products[0]?.id ?? "") {
+    if (!isAdmin) return;
+    const date = new Date();
+    const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    setEditing(null);
+    setCreatingTask(true);
+    setDraft({ id: "", productId, productName: products.find((p) => p.id === productId)?.name ?? "", title: "", details: [],
+      plannedDate: today, endDate: today, status: "not_started", progress: 0, ownerType: "unassigned", assignee: "", notes: "", sourceOrder: 0, updatedAt: "" });
+  }
+
+  async function saveProduct() {
+    if (!isAdmin || !productDraft) return;
+    const parsed = productInputSchema.safeParse(productDraft);
+    if (!parsed.success) { toast.error(parsed.error.issues[0]?.message); return; }
+    setProductSaving(true);
+    try {
+      const response = await fetch("/api/products", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(parsed.data) });
+      const data = await response.json() as { product: Product; error?: string };
+      if (!response.ok) throw new Error(data.error || "تعذر إضافة المنتج.");
+      setProducts((current) => [...current, data.product]);
+      setProductDraft(null);
+      toast.success("تمت إضافة المنتج. يمكنك الآن إضافة مهامه.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إضافة المنتج."); }
+    finally { setProductSaving(false); }
+  }
+
   async function saveDraft() {
-    if (!draft || !editing) return;
+    if (!draft || (!editing && !creatingTask)) return;
+    if (creatingTask) {
+      const valid = taskInputSchema.safeParse(draft);
+      if (!valid.success) { toast.error(valid.error.issues[0]?.message); return; }
+    }
     if (!isAdmin) return;
     const details = taskDetailsSchema.safeParse(draft.details ?? []);
     if (!details.success) {
@@ -416,7 +464,13 @@ export function TaskDashboard() {
     }
     setSaving(true);
     try {
-      await persistTask(editing.id, {
+      if (creatingTask) {
+        const response = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
+        const data = await response.json() as { task: Task; error?: string };
+        if (!response.ok) throw new Error(data.error || "تعذر إضافة المهمة.");
+        setTasks((current) => [...current, data.task]);
+        toast.success("تمت إضافة المهمة.");
+      } else if (editing) await persistTask(editing.id, {
         title: draft.title,
         status: draft.status,
         progress: progressForStatus(draft.status, draft.progress),
@@ -428,6 +482,7 @@ export function TaskDashboard() {
         details: details.data,
       });
       setEditing(null);
+      setCreatingTask(false);
       setDraft(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر حفظ التعديل.");
@@ -482,6 +537,10 @@ export function TaskDashboard() {
       </header>
 
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-8 sm:py-8">
+        {isAdmin && <div className="mb-5 flex flex-wrap gap-3">
+          <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => setProductDraft({ name: "", target: "", description: "", details: [] })}><Plus />إضافة منتج</Button>
+          <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" onClick={() => newTask()}><Plus />إضافة مهمة</Button>
+        </div>}
         <section className="mb-6 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
           <div>
             <p className="text-sm font-bold text-[#116d7b]">لوحة التنفيذ</p>
@@ -491,7 +550,7 @@ export function TaskDashboard() {
         </section>
 
         <section aria-label="ملخص الأداء" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="إجمالي المهام" value={tasks.length} note="ضمن 4 منتجات" icon={ListChecks} tone="teal" />
+          <MetricCard label="إجمالي المهام" value={tasks.length} note={`ضمن ${products.length} منتجات`} icon={ListChecks} tone="teal" />
           <MetricCard label="المهام المكتملة" value={summary.completed} note={`${summary.overall}% متوسط الإنجاز`} icon={CheckCircle2} tone="green" />
           <MetricCard label="قيد الاستحقاق" value={summary.active} note="مهام ضمن فترتها الآن" icon={Clock3} tone="amber" />
           <MetricCard label="تحتاج تدخلاً" value={summary.overdue + summary.blocked} note={`${summary.overdue} متأخرة · ${summary.blocked} متعثرة`} icon={AlertTriangle} tone="red" />
@@ -530,19 +589,24 @@ export function TaskDashboard() {
             </div>
 
             <section>
-              <div className="mb-3"><h3 className="flex items-center gap-2 text-lg font-black text-teal-900"><Images aria-hidden="true" className="size-5 text-teal-700" />المنتجات الأربعة</h3><p className="mt-1 text-sm text-slate-500">تقدم كل مسار وفق مهامه المسندة</p></div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{PRODUCTS.map((product) => {
+              <div className="mb-3"><h3 className="flex items-center gap-2 text-lg font-black text-teal-900"><Images aria-hidden="true" className="size-5 text-teal-700" />المنتجات</h3><p className="mt-1 text-sm text-slate-500">تقدم كل مسار وفق مهامه المسندة</p></div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{products.map((product) => {
                 const productTasks = tasks.filter((task) => task.productId === product.id);
                 const progress = productTasks.length ? Math.round(productTasks.reduce((sum, task) => sum + task.progress, 0) / productTasks.length) : 0;
                 const late = productTasks.filter((task) => timingState(task) === "late").length;
-                const Icon = product.icon;
+                const Icon = PRODUCT_ICONS.find((item) => item.id === product.id)?.icon ?? ListChecks;
                 const colors = productColors(product.id);
-                return <button key={product.id} onClick={() => { setProductFilter(product.id); setTab("tasks"); }} className="rounded-3xl border border-t-4 p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#116d7b]" style={{ borderColor: colors.border, borderTopColor: colors.accent, background: `linear-gradient(145deg, #ffffff, ${colors.surface})` }}>
+                return <article key={product.id} className="min-w-0"><button onClick={() => { setProductFilter(product.id); setTab("tasks"); }} className="w-full rounded-3xl border border-t-4 p-5 text-right shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#116d7b]" style={{ borderColor: colors.border, borderTopColor: colors.accent, background: `linear-gradient(145deg, #ffffff, ${colors.surface})` }}>
                   <div className="flex items-start justify-between"><div className="grid size-11 place-items-center rounded-2xl text-white" style={{ backgroundColor: colors.accent }}><Icon className="size-5" /></div><span className="text-2xl font-black tabular-nums" style={{ color: colors.ink }}>{progress}%</span></div>
                   <h4 className="mt-5 text-base font-black" style={{ color: colors.ink }}>{product.name}</h4><p className="mt-1 text-sm text-slate-500">{product.target} · {productTasks.length} مهمة</p>
                   <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, backgroundColor: colors.accent }} /></div>
                   <div className="mt-3 flex items-center justify-between text-sm"><span className={late ? "rounded-full bg-red-50 px-2 py-1 font-bold text-red-700" : "rounded-full bg-emerald-50 px-2 py-1 font-bold text-emerald-800"}>{late ? `${late} متأخرة` : "ضمن المسار"}</span><ChevronLeft className="size-4 text-slate-400" /></div>
-                </button>;
+                </button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(product.description || product.details?.length) && <Button variant="outline" size="sm" onClick={() => setViewingProduct(product)}>تفاصيل المنتج</Button>}
+                  {isAdmin && <Button variant="outline" size="sm" onClick={() => newTask(product.id)}><Plus />إضافة مهمة</Button>}
+                </div>
+                </article>;
               })}</div>
             </section>
 
@@ -557,7 +621,7 @@ export function TaskDashboard() {
               <div className="border-b border-indigo-100 bg-gradient-to-l from-indigo-50/70 to-white p-4 sm:p-5">
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_210px_190px_190px]">
                   <div className="relative"><Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ابحث في المهام أو المسؤولين..." className="h-11 rounded-xl border-slate-200 pr-10" /></div>
-                  <FilterSelect value={productFilter} onValueChange={setProductFilter} placeholder="كل المنتجات" options={[{ value: "all", label: "كل المنتجات" }, ...PRODUCTS.map((product) => ({ value: product.id, label: product.name }))]} />
+                  <FilterSelect value={productFilter} onValueChange={setProductFilter} placeholder="كل المنتجات" options={[{ value: "all", label: "كل المنتجات" }, ...products.map((product) => ({ value: product.id, label: product.name }))]} />
                   <FilterSelect value={statusFilter} onValueChange={setStatusFilter} placeholder="كل الحالات" options={[{ value: "all", label: "كل الحالات" }, ...STATUS_OPTIONS.map(([value, label]) => ({ value, label }))]} />
                   <FilterSelect value={ownerFilter} onValueChange={setOwnerFilter} placeholder="كل الجهات" options={[{ value: "all", label: "كل الجهات" }, ...OWNER_OPTIONS.map(([value, label]) => ({ value, label }))]} />
                 </div>
@@ -639,10 +703,30 @@ export function TaskDashboard() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editing && isAdmin} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setDraft(null); } }}>
+      <Dialog open={!!productDraft && isAdmin} onOpenChange={(open) => { if (!open && !productSaving) setProductDraft(null); }}>
+        <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl text-right sm:max-w-6xl">
+          <DialogHeader className="text-right sm:text-right"><DialogTitle>إضافة منتج جديد</DialogTitle><DialogDescription>أدخل اسم المنتج والمستهدف ووصفه، وأضف صفوف التفاصيل المناسبة.</DialogDescription></DialogHeader>
+          {productDraft && <fieldset disabled={productSaving} className="grid gap-5">
+            <label className="grid gap-2 text-sm font-bold">اسم المنتج<Input maxLength={120} className="h-11 rounded-xl" value={productDraft.name} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} /></label>
+            <label className="grid gap-2 text-sm font-bold">المستهدف<Input maxLength={120} placeholder="مثل: 10 تقارير" className="h-11 rounded-xl" value={productDraft.target} onChange={(e) => setProductDraft({ ...productDraft, target: e.target.value })} /></label>
+            <label className="grid gap-2 text-sm font-bold">وصف المنتج<Textarea maxLength={1200} className="rounded-xl" value={productDraft.description} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} /></label>
+            <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} label="تفاصيل المنتج" onChange={(details) => setProductDraft({ ...productDraft, details })} />
+          </fieldset>}
+          <DialogFooter><Button disabled={productSaving} onClick={() => void saveProduct()}>{productSaving ? <Loader2 className="animate-spin" /> : <Check />}إضافة المنتج</Button><Button variant="outline" disabled={productSaving} onClick={() => setProductDraft(null)}>إلغاء</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!viewingProduct} onOpenChange={(open) => { if (!open) setViewingProduct(null); }}>
+        <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl text-right sm:max-w-6xl">
+          <DialogHeader className="text-right sm:text-right"><DialogTitle>{viewingProduct?.name}</DialogTitle><DialogDescription>{viewingProduct?.target || "تفاصيل المنتج"}</DialogDescription></DialogHeader>
+          {viewingProduct && <><p className="whitespace-pre-wrap text-sm leading-7">{viewingProduct.description}</p><TaskDetailsReport label="تفاصيل المنتج" task={{ title: viewingProduct.name, details: viewingProduct.details }} /></>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={(!!editing || creatingTask) && isAdmin} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setCreatingTask(false); setDraft(null); } }}>
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl border-slate-200 text-right [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4 sm:max-w-6xl">
-          <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">تحديث المهمة</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
+          <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">{creatingTask ? "إضافة مهمة جديدة" : "تحديث المهمة"}</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
           {draft && <div className="grid gap-5 py-2">
+            {creatingTask && <label className="grid gap-2 text-sm font-bold">المنتج<Select dir="rtl" value={draft.productId} disabled={saving} onValueChange={(productId) => setDraft({ ...draft, productId, productName: products.find((p) => p.id === productId)?.name ?? "" })}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="اختر المنتج" /></SelectTrigger><SelectContent dir="rtl">{products.map((product) => <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>)}</SelectContent></Select></label>}
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
             {isAdmin && <TaskDetailsEditor details={draft.details ?? []} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />}
             <div className="grid gap-4 sm:grid-cols-2">
@@ -655,7 +739,7 @@ export function TaskDashboard() {
             <p className="-mt-2 text-xs leading-6 text-slate-500">تُحسب نسبة الإنجاز تلقائيًا حسب الحالة. يمكن تعديل آخر نسبة إنجاز للحالة المتعثرة.</p>
             <label className="grid gap-2 text-sm font-bold">ملاحظات التنفيذ<Textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="أضف آخر المستجدات أو العوائق أو تفاصيل التسليم..." className="min-h-28 rounded-xl text-base leading-7" /></label>
           </div>}
-          <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Check />}حفظ التحديث</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
+          <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Check />}{creatingTask ? "إضافة المهمة" : "حفظ التحديث"}</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setCreatingTask(false); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </main>
