@@ -4,6 +4,7 @@ import { beforeEach, test } from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { taskDetailsSchema } from "../lib/task-details.ts";
+import { progressForStatus } from "../lib/task-progress.ts";
 
 const legacyTask = {
   id: "task-1", productId: "digital", productName: "المحتوى الرقمي",
@@ -30,13 +31,14 @@ const imports = {
   "@/lib/admin-auth": { getAdminSession: async () => isAdmin ? { email: "admin@example.com" } : null },
   "@/lib/task-data": { DEFAULT_TASKS: [legacyTask] },
   "@/lib/task-details": { taskDetailsSchema },
+  "@/lib/task-progress": { progressForStatus },
 };
 const storeSource = ts.transpileModule(readFileSync(new URL("../lib/task-store.ts", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const storeModule = new vm.SourceTextModule(storeSource);
 await storeModule.link((specifier) => {
-  const values = specifier === "./task-details" ? { taskDetailsSchema } : imports[specifier];
+  const values = specifier === "./task-details" ? { taskDetailsSchema } : specifier === "./task-progress" ? { progressForStatus } : imports[specifier];
   assert.ok(values);
   return new vm.SyntheticModule(Object.keys(values), function () {
     for (const [key, value] of Object.entries(values)) this.setExport(key, value);
@@ -105,4 +107,38 @@ test("invalid details leave stored task unchanged", async () => {
   assert.equal((await patch({ details: [{ ...details[0], completionDate: "2026-02-30" }] })).status, 400);
   assert.equal(writes, 0);
   assert.deepEqual(persisted, [legacyTask]);
+});
+
+test("status transitions set the agreed percentages even when progress is stale", async () => {
+  for (const [status, expected] of [["in_progress", 50], ["review", 80], ["completed", 100], ["not_started", 0]]) {
+    const response = await patch({ status, progress: 17 });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).task.progress, expected);
+    assert.equal(persisted[0].progress, expected);
+  }
+});
+
+test("GET recalculates existing progress for all four products without writing storage", async () => {
+  persisted = ["digital", "infographic", "film", "report"].map((productId, index) => ({
+    ...legacyTask, id: `task-${index}`, productId, status: index % 2 ? "review" : "in_progress", progress: 10, details,
+  }));
+  const response = await GET();
+  assert.equal(response.status, 200);
+  const tasks = (await response.json()).tasks;
+  assert.equal(tasks.length, 4);
+  for (const task of tasks) {
+    assert.equal(task.progress, task.status === "review" ? 80 : 50);
+    assert.deepEqual(task.details, details);
+  }
+  assert.equal(writes, 0);
+  assert.equal(persisted[0].progress, 10);
+});
+
+test("blocked tasks keep their last progress and unrelated edits keep the correct percentage", async () => {
+  await patch({ status: "review" });
+  assert.equal((await (await patch({ status: "blocked" })).json()).task.progress, 80);
+  assert.equal((await (await patch({ assignee: "Updated owner" })).json()).task.progress, 80);
+  assert.equal((await (await patch({ progress: 65 })).json()).task.progress, 65);
+  await patch({ status: "in_progress" });
+  assert.equal((await (await patch({ notes: "Update only notes", progress: 99 })).json()).task.progress, 50);
 });

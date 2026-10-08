@@ -37,7 +37,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
+import { TaskDetailsReport } from "@/components/task-details-report";
 import { taskDetailsSchema } from "@/lib/task-details";
+import { progressForStatus } from "@/lib/task-progress";
 import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus } from "@/lib/types";
 
@@ -87,7 +89,7 @@ async function requestTasks() {
   const response = await fetch("/api/tasks", { cache: "no-store" });
   const data = await response.json() as { tasks?: Task[]; error?: string };
   if (!response.ok) throw new Error(data.error || "تعذر تحميل المهام.");
-  return data.tasks ?? [];
+  return (data.tasks ?? []).map((task) => ({ ...task, progress: progressForStatus(task.status, task.progress) }));
 }
 
 function dateRange(task: Task) {
@@ -375,7 +377,7 @@ export function TaskDashboard() {
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return tasks.filter((task) => {
-      const matchesText = !normalized || `${task.title} ${task.productName} ${task.assignee} ${task.notes}`.toLowerCase().includes(normalized);
+      const matchesText = !normalized || `${task.title} ${task.productName} ${task.assignee} ${task.notes} ${(task.details ?? []).map((detail) => `${detail.description} ${detail.assignee} ${OWNER_LABELS[detail.ownerType] ?? ""}`).join(" ")}`.toLowerCase().includes(normalized);
       return matchesText && (productFilter === "all" || task.productId === productFilter) && (statusFilter === "all" || task.status === statusFilter) && (ownerFilter === "all" || task.ownerType === ownerFilter);
     });
   }, [tasks, query, productFilter, statusFilter, ownerFilter]);
@@ -417,7 +419,7 @@ export function TaskDashboard() {
       await persistTask(editing.id, {
         title: draft.title,
         status: draft.status,
-        progress: draft.progress,
+        progress: progressForStatus(draft.status, draft.progress),
         ownerType: draft.ownerType,
         assignee: draft.assignee,
         plannedDate: draft.plannedDate,
@@ -435,7 +437,7 @@ export function TaskDashboard() {
   }
 
   async function quickStatus(task: Task, status: TaskStatus) {
-    const progress = status === "completed" ? 100 : status === "not_started" ? 0 : task.progress === 0 ? 10 : task.progress;
+    const progress = progressForStatus(status, task.progress);
     try {
       await persistTask(task.id, { status, progress });
     } catch (error) {
@@ -523,7 +525,7 @@ export function TaskDashboard() {
                 <div className="flex items-start justify-between gap-4"><div><p className="text-sm font-bold text-cyan-200">التقدم العام</p><p className="mt-2 text-5xl font-black tabular-nums">{summary.overall}%</p></div><div className="grid size-12 place-items-center rounded-2xl bg-white/10"><Check className="size-6" /></div></div>
                 <div className="mt-6 h-3 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-l from-[#32c6c8] to-[#78e2c4] transition-all" style={{ width: `${summary.overall}%` }} /></div>
                 <div className="mt-7 grid grid-cols-2 gap-3 border-t border-white/10 pt-5"><div><p className="text-2xl font-black">{summary.completed}</p><p className="text-sm text-slate-300">مهمة مكتملة</p></div><div><p className="text-2xl font-black">{tasks.length - summary.completed}</p><p className="text-sm text-slate-300">مهمة متبقية</p></div></div>
-                <div className="mt-6 rounded-2xl bg-white/7 p-4 text-sm leading-7 text-slate-200">تُحتسب النسبة من نسب الإنجاز المسجلة لكل مهمة، وليست من عدد المهام المكتملة فقط.</div>
+                <div className="mt-6 rounded-2xl bg-white/7 p-4 text-sm leading-7 text-slate-200">تُحسب النسبة بمتوسط إنجاز المهام: لم يبدأ 0%، قيد التنفيذ 50%، بانتظار المراجعة 80%، مكتمل 100%. يحتفظ المتعثر بآخر نسبة إنجاز له.</div>
               </section>
             </div>
 
@@ -565,11 +567,11 @@ export function TaskDashboard() {
               <div className="hidden lg:block">
                 <Table dir="rtl" className="text-right [&_td]:text-right [&_th]:text-right">
                   <TableHeader><TableRow className="bg-indigo-50/60 hover:bg-indigo-50/60 [&_th]:font-bold [&_th]:text-indigo-900"><TableHead className="w-[44%] px-5 text-right">المهمة</TableHead><TableHead className="text-right">الموعد</TableHead><TableHead className="text-right">المسؤول</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-right">الإنجاز</TableHead><TableHead className="w-14" /></TableRow></TableHeader>
-                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><ProductPill task={task} /><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}</TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell><TableCell className="px-4">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell></TableRow>)}</TableBody>
+                  <TableBody>{filteredTasks.map((task) => <TableRow key={task.id} className="group"><TableCell className="whitespace-normal px-5 py-4"><ProductPill task={task} /><p className="mt-1 font-bold leading-6 text-slate-900">{task.title}</p>{task.notes && <p className="mt-1 text-sm text-slate-500">{task.notes}</p>}<TaskDetailsReport task={task} /></TableCell><TableCell className="py-4"><p className="font-bold text-slate-800">{dateRange(task)}</p><div className="mt-2"><TimingPill task={task} /></div></TableCell><TableCell className="py-4"><p className="font-bold">{OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell><TableCell className="py-4">{isAdmin ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell><TableCell className="py-4"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell><TableCell className="px-4">{isAdmin && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell></TableRow>)}</TableBody>
                 </Table>
               </div>
 
-              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div></button>)}</div>
+              <div className="divide-y divide-slate-100 lg:hidden">{filteredTasks.map((task) => <button key={task.id} onClick={() => openTask(task)} className="w-full p-4 text-right"><div className="mb-2 flex flex-wrap items-center gap-2"><ProductPill task={task} /><StatusPill status={task.status} /><TimingPill task={task} /></div><p className="font-bold leading-7">{task.title}</p><TaskDetailsReport task={task} /><div className="mt-3 flex items-end justify-between gap-4"><div className="text-sm text-slate-500"><p>{dateRange(task)}</p><p className="mt-1">{OWNER_LABELS[task.ownerType]}{task.assignee ? ` · ${task.assignee}` : ""}</p></div><div className="w-20"><p className="mb-1 text-right text-xs font-black">{task.progress}%</p><TaskProgress task={task} /></div></div></button>)}</div>
               {!filteredTasks.length && <div className="px-6 py-16 text-center text-slate-500"><CircleDashed className="mx-auto mb-3 size-10" />لا توجد مهام مطابقة لمعايير البحث.</div>}
             </section>
           </TabsContent>
@@ -628,12 +630,13 @@ export function TaskDashboard() {
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
             {isAdmin && <TaskDetailsEditor details={draft.details ?? []} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />}
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: value === "completed" ? 100 : value === "not_started" ? 0 : draft.progress })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
+              <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: progressForStatus(value as TaskStatus, draft.progress) })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
               <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
             </div>
             <label className="grid gap-2 text-sm font-bold">المسؤول المباشر<div className="relative"><UserRound className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><Input value={draft.assignee} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} placeholder="اكتب اسم الشخص المسؤول" className="h-11 rounded-xl pr-10" /></div></label>
             <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">تاريخ البداية<Input type="date" value={draft.plannedDate} onChange={(event) => setDraft({ ...draft, plannedDate: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">تاريخ النهاية<Input type="date" value={draft.endDate} min={draft.plannedDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} className="h-11 rounded-xl" /></label></div>
-            <label className="grid gap-3 text-sm font-bold"><span className="flex items-center justify-between"><span>نسبة الإنجاز</span><strong className="text-lg text-[#116d7b]">{draft.progress}%</strong></span><Slider dir="rtl" min={0} max={100} step={5} value={[draft.progress]} onValueChange={(value) => setDraft({ ...draft, progress: value[0], status: value[0] === 100 ? "completed" : draft.status === "completed" ? "in_progress" : draft.status })} className="[&_[data-slot=slider-range]]:bg-[#177f8f] [&_[data-slot=slider-thumb]]:border-[#177f8f]" /></label>
+            <label className="grid gap-3 text-sm font-bold"><span className="flex items-center justify-between"><span>نسبة الإنجاز</span><strong className="text-lg text-[#116d7b]">{draft.progress}%</strong></span><Slider disabled={saving || draft.status !== "blocked"} dir="rtl" min={0} max={100} step={5} value={[draft.progress]} onValueChange={(value) => setDraft({ ...draft, progress: value[0] })} className="[&_[data-slot=slider-range]]:bg-[#177f8f] [&_[data-slot=slider-thumb]]:border-[#177f8f]" /></label>
+            <p className="-mt-2 text-xs leading-6 text-slate-500">تُحسب نسبة الإنجاز تلقائيًا حسب الحالة. يمكن تعديل آخر نسبة إنجاز للحالة المتعثرة.</p>
             <label className="grid gap-2 text-sm font-bold">ملاحظات التنفيذ<Textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="أضف آخر المستجدات أو العوائق أو تفاصيل التسليم..." className="min-h-28 rounded-xl text-base leading-7" /></label>
           </div>}
           <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Check />}حفظ التحديث</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>

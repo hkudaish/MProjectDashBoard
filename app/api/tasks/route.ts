@@ -3,6 +3,7 @@ import { createTaskStore } from "@/lib/task-store";
 import { getAdminSession } from "@/lib/admin-auth";
 import type { Task } from "@/lib/types";
 import { taskDetailsSchema } from "@/lib/task-details";
+import { progressForStatus } from "@/lib/task-progress";
 
 const VALID_STATUSES = new Set(["not_started", "in_progress", "review", "completed", "blocked"]);
 const VALID_OWNERS = new Set(["wamy", "vendor", "joint", "unassigned"]);
@@ -25,7 +26,7 @@ async function readTasks() {
 export async function GET() {
   try {
     const { tasks } = await readTasks();
-    const sorted = [...tasks].sort((a, b) =>
+    const sorted = tasks.map((task) => ({ ...task, progress: progressForStatus(task.status, task.progress) })).sort((a, b) =>
       a.plannedDate.localeCompare(b.plannedDate) ||
       a.productId.localeCompare(b.productId) ||
       a.sourceOrder - b.sourceOrder
@@ -81,6 +82,7 @@ export async function PATCH(request: Request) {
     if (index === -1) return Response.json({ error: "لم يتم العثور على المهمة." }, { status: 404 });
 
     const updated = { ...tasks[index], ...update } as Task;
+    updated.progress = progressForStatus(updated.status, updated.progress);
     const nextTasks = [...tasks];
     nextTasks[index] = updated;
     await store.setTasks(nextTasks);
