@@ -305,3 +305,51 @@ test("updating the system director's display name preserves their active session
   const after = await accounts.findAccount("admin@example.com"); assert.equal(after.passwordHash, before.passwordHash); assert.equal(after.sessionVersion, before.sessionVersion);
   assert.equal((await auth.getSystemAdminSession(new Headers({ cookie: admin }))).name, "Updated Director");
 });
+
+test("changing login email preserves assignments, reporting links and passwords, and revokes old sessions", async () => {
+  const admin = await adminCookie(); await tree(admin);
+  const managerCookie = await personalCookie("department@example.com");
+  const before = await accounts.findAccount("department@example.com");
+  const created = await tasks.POST(request({ ...seed, title: "History", assigneeEmail: "department@example.com", assignee: "" }, admin)); assert.equal(created.status, 201); const task = (await created.json()).task;
+  const renamed = await users.PATCH(request({ email: "department@example.com", newEmail: "RENAMED@example.com", name: "Renamed Manager" }, admin, "PATCH")); assert.equal(renamed.status, 200);
+  const after = await accounts.findAccount("department@example.com"); assert.equal(after.passwordHash, before.passwordHash); assert.equal(after.loginEmail, "renamed@example.com");
+  assert.equal((await accounts.findAccount("section@example.com")).managerEmail, "department@example.com");
+  assert.equal(await auth.getUserSession(new Headers({ cookie: managerCookie })), null);
+  assert.equal((await signIn("department@example.com", personalPassword)).status, 401);
+  const signed = await signIn("renamed@example.com", personalPassword); assert.equal(signed.status, 200); assert.equal((await signed.clone().json()).loginEmail, "renamed@example.com");
+  assert.equal((await tasks.PATCH(request({ id: task.id, status: "review" }, cookie(signed), "PATCH"))).status, 200);
+  assert.deepEqual((await (await directory.GET(request(null, cookie(signed), "GET"))).json()).assignableUsers.map(user=>user.email).sort(), ["section@example.com", "staff@example.com"]);
+  assert.equal((await reset.POST(request({ email: "renamed@example.com" }))).status, 200); assert.ok((await accounts.findAccount("department@example.com")).resetRequestedAt);
+  assert.equal((await users.PATCH(request({ email: "department@example.com", newEmail: "outside@example.com" }, admin, "PATCH"))).status, 400);
+});
+test("system director can change their login email without being locked out", async () => {
+  const admin = await adminCookie();
+  const changed = await users.PATCH(request({ email: "admin@example.com", newEmail: "director@example.com" }, admin, "PATCH")); assert.equal(changed.status, 200);
+  assert.equal(await auth.getUserSession(new Headers({ cookie: admin })), null);
+  assert.ok(await auth.getSystemAdminSession(new Headers({ cookie: cookie(changed) })));
+  assert.equal((await signIn("director@example.com", personalPassword)).status, 200);
+  assert.equal((await signIn("admin@example.com", personalPassword)).status, 401);
+});
+test("account deletion removes login access while preserving task history and preventing identity reuse", async () => {
+  const admin = await adminCookie(); await tree(admin); const staffCookie=await personalCookie("staff@example.com");
+  const row={id:"historical-row",description:"Historical detail",status:"review",completionDate:"",ownerType:"wamy",assignee:"",assigneeEmail:"staff@example.com"};
+  const created=await tasks.POST(request({...seed,assignee:"",assigneeEmail:"staff@example.com",details:[row]},admin));assert.equal(created.status,201);const task=(await created.json()).task;
+  const storedBefore=structuredClone(data.get("tasks").value);
+  assert.equal((await users.DELETE(request({email:"staff@example.com"},admin,"DELETE"))).status,200);
+  assert.equal(await auth.getUserSession(new Headers({cookie:staffCookie})),null);
+  assert.equal((await signIn("staff@example.com",personalPassword)).status,401);
+  assert.ok(!(await accounts.listUsers()).some(user=>user.email==="staff@example.com"));
+  assert.equal(data.get("user-accounts-v1").value.find(user=>user.email==="staff@example.com").passwordHash,"");
+  assert.deepEqual(data.get("tasks").value,storedBefore);
+  assert.equal((await tasks.PATCH(request({id:task.id,notes:"History remains editable"},admin,"PATCH"))).status,200);
+  assert.equal((await users.POST(request({email:"staff@example.com",name:"Reused",position:"employee",managerEmail:"section@example.com",entityId:"wamy",password:temporaryPassword},admin))).status,400);
+});
+test("account deletion protects supervisors and self and is restricted to the system director", async () => {
+  const admin=await adminCookie();await tree(admin);const manager=await personalCookie("department@example.com");
+  assert.equal((await users.DELETE(request({email:"section@example.com"},admin,"DELETE"))).status,400);
+  assert.equal((await users.DELETE(request({email:"admin@example.com"},admin,"DELETE"))).status,400);
+  assert.equal((await users.DELETE(request({email:"staff@example.com"},manager,"DELETE"))).status,403);
+  assert.equal((await users.DELETE(request({email:"staff@example.com"},admin,"DELETE","https://foreign.example"))).status,403);
+  assert.equal((await users.DELETE(request("invalid-json",admin,"DELETE"))).status,400);
+  assert.equal((await users.DELETE(request({email:"missing@example.com"},admin,"DELETE"))).status,400);
+});

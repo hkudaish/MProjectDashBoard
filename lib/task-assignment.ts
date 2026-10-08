@@ -39,6 +39,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
     const email = item.assigneeEmail?.trim().toLowerCase() ?? "";
     if (email) {
       const target = users.find((user) => user.email === email);
+      if (!target && email === old?.assigneeEmail) return { assigneeEmail: email, assignee: old.assignee };
       if (!target) throw new TaskPolicyError("المستخدم المحدد غير موجود.", 400);
       if (email !== old?.assigneeEmail && (!target.active || !target.position || !assignable.has(email))) throw new TaskPolicyError("يمكن إسناد المهام إلى المستخدمين التابعين لك إداريًا فقط.");
       return { assigneeEmail: email, assignee: target.name };

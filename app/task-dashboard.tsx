@@ -23,10 +23,13 @@ import {
   Building2,
   RefreshCw,
   Search,
+  Settings,
   Sparkles,
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ProjectClock } from "@/components/project-clock";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -221,6 +224,7 @@ export function TaskDashboard() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [resetRequestOpen, setResetRequestOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [productFilter, setProductFilter] = useState("all");
@@ -246,11 +250,12 @@ export function TaskDashboard() {
       setLoadError(error instanceof Error ? error.message : "تعذر تحميل المهام.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   const refreshTasks = useCallback(() => {
-    setLoading(true);
+    setRefreshing(true);
     void loadTasks();
   }, [loadTasks]);
 
@@ -303,7 +308,10 @@ export function TaskDashboard() {
   const canEditMain = creatingTask || draft?.permissions?.canEditMain === true || userSession?.position === "system_admin";
   const canUpdateMain = creatingTask || draft?.permissions?.canUpdateMain === true || userSession?.position === "system_admin";
   const canAssign = creatingTask || draft?.permissions?.canAssign === true || userSession?.position === "system_admin";
-  function refreshAdministration() { void loadDirectory(); void loadTasks(); }
+  function refreshAdministration() {
+    void loadDirectory(); void loadTasks();
+    void fetch("/api/auth/session", { cache: "no-store" }).then((response) => response.json() as Promise<SessionInfo>).then((session: SessionInfo) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }).catch(() => undefined);
+  }
 
   async function submitAdminLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -345,6 +353,7 @@ export function TaskDashboard() {
       setEditing(null);
       setCreatingTask(false);
       setDraft(null);
+      void loadTasks();
       toast.success("تم تسجيل الخروج");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر تسجيل الخروج.");
@@ -570,43 +579,46 @@ export function TaskDashboard() {
     <main dir="rtl" className="min-h-screen bg-[#f3f7f8] text-slate-900">
       <Toaster dir="rtl" position="top-center" richColors />
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-4 sm:px-8">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#116d7b] text-white shadow-[0_8px_24px_rgba(17,109,123,.2)]"><ListChecks className="size-6" /></div>
             <div className="min-w-0">
-              <h1 className="truncate text-lg font-black sm:text-xl">متابعة منتجات المشروع الإعلامي</h1>
+              <h1 className="text-lg font-black sm:text-xl">متابعة منتجات المشروع الإعلامي</h1>
               <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">خطة التنفيذ للجزء الأول - ثلاثة أشهر</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {userSession?.authenticated ? <>
-              <span className="hidden max-w-40 truncate text-sm font-semibold text-emerald-700 sm:inline">{adminEmail}</span>
-              {userSession.position && <span className="hidden rounded-full bg-sky-50 px-2 py-1 text-xs font-bold text-sky-800 lg:inline">{POSITIONS[userSession.position]}</span>}
-              {userSession.canManageUsers && <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => setAdminManagerOpen(true)}><UserPlus className="size-4" /><span className="hidden sm:inline">إدارة المستخدمين</span></Button>}
-              {userSession.canManageUsers && <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => setEntitiesOpen(true)} aria-label="إدارة الجهات"><Building2 className="size-4" /><span className="hidden lg:inline">إدارة الجهات</span></Button>}
-              <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => setPasswordOpen(true)} aria-label="تغيير كلمة المرور"><KeyRound className="size-4" /><span className="hidden lg:inline">كلمة المرور</span></Button>
-              <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => void logoutAdmin()}><LogOut className="size-4" /><span className="hidden sm:inline">تسجيل الخروج</span></Button>
-            </> : <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={() => { setLoginError(""); setLoginOpen(true); }} disabled={authLoading}><LogIn className="size-4" /><span className="hidden sm:inline">تسجيل الدخول</span></Button>}
-            <Button variant="outline" size="sm" className="h-10 rounded-xl border-slate-200 bg-white" onClick={refreshTasks}><RefreshCw className="size-4" /><span className="hidden sm:inline">تحديث البيانات</span></Button>
+          <div className="flex shrink-0 items-center gap-2">
+            <DropdownMenu dir="rtl"><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-xl border-teal-100 bg-teal-50/50 text-teal-900"><Settings className="size-4" /><span>الإعدادات</span></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">
+                <DropdownMenuLabel className="space-y-1 px-3 py-2"><p className="text-xs font-normal text-slate-500">الحساب الحالي</p>{userSession?.authenticated ? <><p className="font-bold text-teal-900">{userSession.position ? POSITIONS[userSession.position] : "مستخدم"}</p><p dir="ltr" className="break-all text-right text-xs font-normal text-slate-600">{userSession.loginEmail ?? adminEmail}</p></> : <p className="text-sm text-slate-600">لم تسجّل الدخول</p>}</DropdownMenuLabel>
+                {userSession?.authenticated && <><DropdownMenuSeparator /><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setPasswordOpen(true)}><KeyRound className="size-4" />تغيير كلمة المرور</DropdownMenuItem>
+                  {userSession.canManageUsers && <><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setAdminManagerOpen(true)}><UserPlus className="size-4" />إدارة المستخدمين</DropdownMenuItem><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setEntitiesOpen(true)}><Building2 className="size-4" />إدارة الجهات</DropdownMenuItem></>}
+                </>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button variant="outline" className="rounded-xl border-slate-200 bg-white" disabled={authLoading} onClick={() => { if (userSession?.authenticated) void logoutAdmin(); else { setLoginError(""); setLoginOpen(true); } }}>{userSession?.authenticated ? <LogOut className="size-4" /> : <LogIn className="size-4" />}<span>{userSession?.authenticated ? "تسجيل الخروج" : "تسجيل الدخول"}</span></Button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-8 sm:py-8">
+        <ProjectClock />
         <section aria-label="اختيار المشروع" className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-teal-100 bg-white p-4 shadow-sm">
           <label className="grid min-w-60 flex-1 gap-2 text-sm font-bold text-teal-900">المشروع<Select dir="rtl" value={activeProjectId} onValueChange={selectProject}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></label>
           {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus />إضافة مشروع</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
           {currentProject?.description && <p className="w-full whitespace-pre-wrap text-sm leading-6 text-slate-500">{currentProject.description}</p>}
-        </section>
-        {isAdmin && <div className="mb-5 flex flex-wrap gap-3">
+          <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+            <div className="flex flex-wrap gap-3">{isAdmin && <>
           {userSession?.canManageProducts && <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus />إضافة منتج</Button>}
           <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" disabled={!visibleProducts.length} onClick={() => newTask()}><Plus />إضافة مهمة</Button>
-        </div>}
+            </>}</div>
+            <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600" onClick={refreshTasks} disabled={refreshing}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />تحديث البيانات</Button>
+          </div>
+        </section>
         <section className="mb-6 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
           <div>
             <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">لوحة المعلومات ومتابعة الإنجاز</h2>
           </div>
-          <div className="flex items-center gap-2 text-sm text-slate-500"><CalendarDays className="size-4" /> اليوم: {new Intl.DateTimeFormat("ar-SA", { dateStyle: "long" }).format(new Date())}</div>
         </section>
 
         <section aria-label="ملخص الأداء" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

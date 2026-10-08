@@ -1,17 +1,19 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, RefreshCw, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, RefreshCw, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
 import { UserHierarchyFields } from "@/components/user-hierarchy-fields";
 import { POSITIONS, type Entity, type Position, type PublicUser } from "@/lib/user-types";
 
 export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged }: { open: boolean; onOpenChange: (open: boolean) => void; currentEmail: string; onChanged: () => void }) {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [editingUser, setEditingUser] = useState<(PublicUser & { position: Position }) | null>(null);
+  const [deletingUser, setDeletingUser] = useState<PublicUser | null>(null);
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -35,7 +37,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
     finally { setLoading(false); }
   }, []);
   useEffect(() => { if (!open) return; const timer = setTimeout(() => { void load(); }, 0); return () => clearTimeout(timer); }, [open, load]);
-  async function mutate(method: "POST" | "PATCH", body: object) {
+  async function mutate(method: "POST" | "PATCH" | "DELETE", body: object) {
     setSaving(true); setError("");
     try {
       const response = await fetch("/api/auth/users", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -49,9 +51,9 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
   }
   function close() {
     setDraft({ name: "", email: "", password: "", confirmation: "", position: "employee", managerEmail: null, entityId: null });
-    setEditingUser(null); setResetEmail(""); setTemporaryPassword(""); setConfirmation(""); setError(""); onOpenChange(false);
+    setEditingUser(null); setDeletingUser(null); setResetEmail(""); setTemporaryPassword(""); setConfirmation(""); setError(""); onOpenChange(false);
   }
-  return <Dialog open={open} onOpenChange={(value) => { if (!saving) { if (value) onOpenChange(true); else close(); } }}>
+  return <><Dialog open={open} onOpenChange={(value) => { if (!saving) { if (value) onOpenChange(true); else close(); } }}>
     <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl text-right sm:max-w-5xl [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4">
       <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">إدارة المستخدمين</DialogTitle><DialogDescription>أنشئ الحسابات وحدد مناصبها وارتباطاتها الإدارية. كل كلمة مرور جديدة أو معاد ضبطها مؤقتة، ويجب تغييرها عند أول دخول.</DialogDescription></DialogHeader>
       <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-bold text-amber-800">{users.filter((u) => u.resetRequestedAt).length} طلبات إعادة ضبط معلقة</p><Button variant="outline" size="sm" disabled={loading || saving} onClick={() => void load()}><RefreshCw />تحديث القائمة</Button></div>
@@ -59,17 +61,17 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
       {loading ? <p className="text-sm text-slate-500">جارٍ تحميل الحسابات...</p> : <Table className="min-w-[700px] text-right [&_th]:text-right">
         <TableHeader className="bg-teal-50"><TableRow><TableHead>المستخدم</TableHead><TableHead>الهيكل الإداري</TableHead><TableHead>حالة الحساب</TableHead><TableHead>كلمة المرور</TableHead><TableHead>إجراءات</TableHead></TableRow></TableHeader>
         <TableBody>{users.map((user) => <TableRow key={user.email}>
-          <TableCell><p className="font-bold">{user.name}</p><p dir="ltr" className="mt-1 text-right text-xs text-slate-500">{user.email}</p></TableCell>
+          <TableCell><p className="font-bold">{user.name}</p><p dir="ltr" className="mt-1 text-right text-xs text-slate-500">{user.loginEmail ?? user.email}</p></TableCell>
           <TableCell className="whitespace-normal text-xs leading-6"><p className="font-bold text-teal-900">{user.position ? POSITIONS[user.position] : "يلزم تحديد المنصب والارتباط"}</p><p>المسؤول: {user.position === "system_admin" ? "مستقل" : users.find((manager) => manager.email === user.managerEmail)?.name ?? "غير محدد"}</p><p>الجهة: {user.position === "system_admin" ? "مستقل" : entities.find((entity) => entity.id === user.entityId)?.name ?? "غير محددة"}</p></TableCell>
           <TableCell><span className={`rounded-full px-2 py-1 text-xs font-bold ${user.active ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>{user.active ? "نشط" : "معطل"}</span></TableCell>
           <TableCell className="whitespace-normal text-xs leading-6"><p>{user.mustChangePassword ? "يلزم تغيير كلمة المرور" : "كلمة مرور خاصة بالحساب"}</p>{user.resetRequestedAt && <p className="font-bold text-amber-800">طلب إعادة ضبط · {new Intl.DateTimeFormat("ar-SA", { dateStyle: "short" }).format(new Date(user.resetRequestedAt))}</p>}</TableCell>
-          <TableCell><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={saving} onClick={() => setEditingUser({ ...user, position: user.position ?? "employee" })}>تعديل الارتباطات</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => { setResetEmail(user.email); setTemporaryPassword(""); setConfirmation(""); }}><KeyRound />إعادة ضبط</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => void mutate("PATCH", { email: user.email, active: !user.active })}>{user.active ? "تعطيل" : "تفعيل"}</Button></div></TableCell>
+          <TableCell><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={saving} onClick={() => setEditingUser({ ...user, position: user.position ?? "employee" })}>تعديل البيانات</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => { setResetEmail(user.email); setTemporaryPassword(""); setConfirmation(""); }}><KeyRound />إعادة ضبط</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => void mutate("PATCH", { email: user.email, active: !user.active })}>{user.active ? "تعطيل" : "تفعيل"}</Button><Button variant="outline" size="sm" className="text-red-700" disabled={saving || user.email === currentEmail} onClick={() => setDeletingUser(user)}><Trash2 className="size-4" />حذف الحساب</Button></div></TableCell>
         </TableRow>)}</TableBody>
       </Table>}
-      {editingUser && <form className="grid gap-4 rounded-2xl border border-sky-200 bg-sky-50/40 p-4" onSubmit={(event) => { event.preventDefault(); void mutate("PATCH", { email: editingUser.email, name: editingUser.name, position: editingUser.position, managerEmail: editingUser.managerEmail, entityId: editingUser.entityId }).then((ok) => { if (ok) { setEditingUser(null); toast.success("تم تحديث المنصب والارتباط الإداري."); } }); }}>
-        <h3 className="font-black text-sky-900">تعديل المستخدم: {editingUser.email}</h3>
-        <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">اسم المستخدم<Input required maxLength={120} value={editingUser.name} onChange={(event) => setEditingUser({ ...editingUser, name: event.target.value })} /></label><UserHierarchyFields value={editingUser} onChange={(links) => setEditingUser({ ...editingUser, ...links })} users={users} entities={entities} disabled={saving} email={editingUser.email} lockPosition={editingUser.email === currentEmail} /></fieldset>
-        <div className="flex gap-2"><Button type="submit" disabled={saving}>حفظ الارتباطات</Button><Button type="button" variant="outline" disabled={saving} onClick={() => setEditingUser(null)}>إلغاء</Button></div>
+      {editingUser && <form className="grid gap-4 rounded-2xl border border-sky-200 bg-sky-50/40 p-4" onSubmit={(event) => { event.preventDefault(); void mutate("PATCH", { email: editingUser.email, newEmail: editingUser.loginEmail, name: editingUser.name, position: editingUser.position, managerEmail: editingUser.managerEmail, entityId: editingUser.entityId }).then((ok) => { if (ok) { setEditingUser(null); toast.success("تم تحديث بيانات المستخدم."); } }); }}>
+        <h3 className="font-black text-sky-900">تعديل المستخدم: {editingUser.loginEmail}</h3>
+        <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">اسم المستخدم<Input required maxLength={120} value={editingUser.name} onChange={(event) => setEditingUser({ ...editingUser, name: event.target.value })} /></label><label className="grid gap-2 text-sm font-bold">بريد تسجيل الدخول<Input type="email" dir="ltr" required maxLength={254} value={editingUser.loginEmail} onChange={(event) => setEditingUser({ ...editingUser, loginEmail: event.target.value })} /></label><UserHierarchyFields value={editingUser} onChange={(links) => setEditingUser({ ...editingUser, ...links })} users={users} entities={entities} disabled={saving} email={editingUser.email} lockPosition={editingUser.email === currentEmail} /></fieldset>
+        <div className="flex gap-2"><Button type="submit" disabled={saving}>حفظ البيانات</Button><Button type="button" variant="outline" disabled={saving} onClick={() => setEditingUser(null)}>إلغاء</Button></div>
       </form>}
       {resetEmail && <form className="grid gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" onSubmit={(event) => { event.preventDefault(); if (temporaryPassword !== confirmation) { setError("كلمتا المرور غير متطابقتين."); return; } void mutate("PATCH", { email: resetEmail, temporaryPassword }).then((ok) => { if (ok) { setResetEmail(""); setTemporaryPassword(""); setConfirmation(""); toast.success("تم تعيين كلمة مرور مؤقتة وإلغاء الجلسات السابقة. سلّمها لصاحب الحساب."); } }); }}>
         <h3 className="font-bold text-amber-900">إعادة ضبط كلمة مرور: <span dir="ltr">{resetEmail}</span></h3>
@@ -90,5 +92,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
         <DialogFooter><Button type="submit" disabled={saving || loading}>{saving ? <Loader2 className="animate-spin" /> : <UserPlus />}إنشاء الحساب</Button><Button type="button" variant="outline" disabled={saving} onClick={close}>إغلاق</Button></DialogFooter>
       </form>
     </DialogContent>
-  </Dialog>;
+  </Dialog>
+  <AlertDialog open={Boolean(deletingUser)} onOpenChange={(value) => { if (!saving && !value) setDeletingUser(null); }}><AlertDialogContent dir="rtl" className="rounded-2xl text-right"><AlertDialogHeader className="sm:text-right"><AlertDialogTitle>حذف حساب المستخدم</AlertDialogTitle><AlertDialogDescription>هل تريد حذف حساب «{deletingUser?.name}»؟ سيتوقف تسجيل دخوله وتُلغى جلساته. ستبقى بيانات المهام السابقة محفوظة، ويلزم نقل ارتباطات المستخدمين التابعين له قبل الحذف.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={saving}>إلغاء</AlertDialogCancel><AlertDialogAction className="bg-red-700 hover:bg-red-800" disabled={saving} onClick={(event) => { event.preventDefault(); if (deletingUser) void mutate("DELETE", { email: deletingUser.email }).then((ok) => { setDeletingUser(null); if (ok) toast.success("تم حذف الحساب."); }); }}>حذف الحساب</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+  </>;
 }
