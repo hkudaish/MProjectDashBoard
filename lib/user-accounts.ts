@@ -123,7 +123,9 @@ async function validateHierarchy(accounts: Account[], changedEmail: string, prev
     if (account.position === "system_admin") { if (account.managerEmail || account.entityId) throw new Error(HIERARCHY_ERRORS[1]); continue; }
     if (!account.managerEmail || !account.entityId) throw new Error(HIERARCHY_ERRORS[0]);
     const manager = accounts.find((candidate) => candidate.email === account.managerEmail && !candidate.deleted);
-    if (!manager || !manager.position || (account.active && !manager.active) || !MANAGER_POSITIONS[account.position].includes(manager.position)) throw new Error(account.email === changedEmail ? HIERARCHY_ERRORS[2] : HIERARCHY_ERRORS[5]);
+    // Legacy employee/project links remain visible for repair without blocking unrelated users.
+    const legacyLink = account.email !== changedEmail && account.position === "employee" && manager?.position === "project_manager" && (!account.active || manager.active) && (manager.email !== changedEmail || previous?.position === manager.position && previous.active === manager.active);
+    if (!legacyLink && (!manager || !manager.position || (account.active && !manager.active) || !MANAGER_POSITIONS[account.position].includes(manager.position))) throw new Error(account.email === changedEmail ? HIERARCHY_ERRORS[2] : HIERARCHY_ERRORS[5]);
     if (!entities.some((entity) => entity.id === account.entityId && !entity.deleted && (!entity.hidden || account.email !== changedEmail || previous?.entityId === account.entityId))) throw new Error(HIERARCHY_ERRORS[4]);
     const visited = new Set([account.email]); let supervisor: Account | undefined = manager;
     while (supervisor) { if (visited.has(supervisor.email)) throw new Error(HIERARCHY_ERRORS[3]); visited.add(supervisor.email); supervisor = accounts.find((candidate) => candidate.email === supervisor?.managerEmail); }

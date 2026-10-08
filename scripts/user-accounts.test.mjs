@@ -61,7 +61,7 @@ async function adminCookie() {
   assert.equal(changed.status, 200); return cookie(changed);
 }
 async function newUser(admin, email, role = "editor") {
-  const position = role === "admin" ? "system_admin" : role === "editor" ? "project_manager" : "employee";
+  const position = email === "test-manager@example.com" ? "department_manager" : role === "admin" ? "system_admin" : role === "editor" ? "project_manager" : "employee";
   if (position === "employee" && !await accounts.findAccount("test-manager@example.com")) await newUser(admin, "test-manager@example.com");
   const response = await users.POST(request({ email, name: "User", position, managerEmail: position === "system_admin" ? null : position === "employee" ? "test-manager@example.com" : "admin@example.com", entityId: position === "system_admin" ? null : "wamy", password: temporaryPassword }, admin));
   assert.equal(response.status, 201, await response.clone().text()); return response;
@@ -215,14 +215,14 @@ async function tree(admin) {
   await positioned(admin, "department@example.com", "department_manager", "admin@example.com");
   await positioned(admin, "section@example.com", "section_head", "department@example.com");
   await positioned(admin, "staff@example.com", "employee", "section@example.com");
-  await positioned(admin, "outside@example.com", "project_manager", "admin@example.com");
+  await positioned(admin, "outside@example.com", "department_manager", "admin@example.com");
   await positioned(admin, "otherstaff@example.com", "employee", "outside@example.com");
 }
 test("hierarchy requires valid positions, supervisors and entities and protects dependent users", async () => {
   const admin = await adminCookie(); await tree(admin);
   for (const fields of [
     { position: "employee", managerEmail: "admin@example.com", entityId: "wamy" },
-    { position: "section_head", managerEmail: "outside@example.com", entityId: "wamy" },
+    { position: "section_head", managerEmail: "admin@example.com", entityId: "wamy" },
     { position: "department_manager", managerEmail: "admin@example.com", entityId: null },
     { position: "system_admin", managerEmail: "admin@example.com", entityId: null },
     { position: "project_manager", managerEmail: "admin@example.com", entityId: "missing" },
@@ -352,4 +352,33 @@ test("account deletion protects supervisors and self and is restricted to the sy
   assert.equal((await users.DELETE(request({email:"staff@example.com"},admin,"DELETE","https://foreign.example"))).status,403);
   assert.equal((await users.DELETE(request("invalid-json",admin,"DELETE"))).status,400);
   assert.equal((await users.DELETE(request({email:"missing@example.com"},admin,"DELETE"))).status,400);
+});
+
+const hierarchy = await exports("lib/hierarchy.ts");
+test("employees report to section heads or departments, with the complete chain shown in order", async () => {
+  const admin=await adminCookie();await tree(admin);
+  await positioned(admin,"project@example.com","project_manager","admin@example.com");
+  const listed=await accounts.listUsers();
+  const options=hierarchy.managerOptions(listed,"employee");
+  assert.ok(options.some(user=>user.email==="section@example.com"));assert.ok(options.some(user=>user.email==="department@example.com"));
+  assert.ok(!options.some(user=>user.position==="project_manager"||user.position==="system_admin"||user.position==="employee"));
+  assert.deepEqual(hierarchy.supervisorChain(listed,"section@example.com").map(user=>user.position),["system_admin","department_manager","section_head"]);
+  assert.equal((await users.POST(request({email:"invalidstaff@example.com",name:"Invalid",position:"employee",managerEmail:"project@example.com",entityId:"wamy",password:temporaryPassword},admin))).status,400);
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"project@example.com"},admin,"PATCH"))).status,400);
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"department@example.com"},admin,"PATCH"))).status,200);
+  const current=await accounts.listUsers();assert.deepEqual(hierarchy.supervisorChain(current,(await accounts.findAccount("staff@example.com")).managerEmail).map(user=>user.position),["system_admin","department_manager"]);
+  assert.ok(hierarchy.subordinateUsers(current,"department@example.com").some(user=>user.email==="staff@example.com"));
+  assert.ok(!hierarchy.subordinateUsers(current,"section@example.com").some(user=>user.email==="staff@example.com"));
+});
+test("legacy employee/project links are repairable without granting project managers assignment scope", async () => {
+  const admin=await adminCookie();await tree(admin);await positioned(admin,"project@example.com","project_manager","admin@example.com");
+  const previousHash=(await accounts.findAccount("staff@example.com")).passwordHash;
+  const rows=data.get("user-accounts-v1").value;rows.find(user=>user.email==="staff@example.com").managerEmail="project@example.com";
+  data.set("user-accounts-v1",{etag:"legacy-project-link",value:rows});
+  const manager=await personalCookie("project@example.com");
+  assert.deepEqual((await(await directory.GET(request(null,manager,"GET"))).json()).assignableUsers,[]);
+  assert.equal((await tasks.POST(request({...seed,assigneeEmail:"staff@example.com",assignee:""},manager))).status,403);
+  await positioned(admin,"newdepartment@example.com","department_manager","admin@example.com");
+  assert.equal((await users.PATCH(request({email:"staff@example.com",managerEmail:"section@example.com"},admin,"PATCH"))).status,200);
+  assert.equal((await accounts.findAccount("staff@example.com")).passwordHash,previousHash);
 });
