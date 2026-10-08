@@ -608,7 +608,7 @@ export function TaskDashboard() {
       </Dialog>
 
       <Dialog open={!!editing && isAdmin} onOpenChange={(open) => { if (!open && !saving) { setEditing(null); setDraft(null); } }}>
-        <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl border-slate-200 text-right [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4 sm:max-w-2xl">
+        <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl border-slate-200 text-right [&_[data-slot=dialog-close]]:right-auto [&_[data-slot=dialog-close]]:left-4 sm:max-w-6xl">
           <DialogHeader className="text-right sm:text-right"><DialogTitle className="text-xl font-black">تحديث المهمة</DialogTitle><DialogDescription className="leading-6">عدّل الإسناد والحالة ونسبة الإنجاز أو التوقيت، ثم احفظ التغييرات.</DialogDescription></DialogHeader>
           {draft && <div className="grid gap-5 py-2">
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
