@@ -36,10 +36,10 @@ function configureGmail() {
     assert.equal(options.headers.Authorization,"Bearer test-access");
     if(path.endsWith("/profile"))return Response.json({emailAddress:"hkudaish@gmail.com"});
     if(path.endsWith("/messages/send")) {const body=JSON.parse(options.body);gmailSent.push({...body,parsed:await require("mailparser").simpleParser(Buffer.from(body.raw,"base64url"))});return Response.json({id:"sent-api-id"});}
-    if(path.includes("/messages?"))return Response.json({messages:[{id:"abc123"}],nextPageToken:"page_2"});
+    if(path.includes("/messages?")) { const query=new URL(path).searchParams;assert.equal(query.get("q"),'subject:"MProjDashboard"');assert.equal(query.get("labelIds"),"INBOX");return Response.json({messages:[{id:"abc123"}],nextPageToken:"page_2"}); }
     if(path.includes("/messages/abc123")) {
-      if(path.includes("format=raw"))return Response.json({id:"abc123",threadId:"thread1",labelIds:["INBOX","UNREAD"],raw:Buffer.from("From: Sender <sender@example.com>\r\nReply-To: support@example.com\r\nTo: hkudaish@gmail.com\r\nSubject: Test message\r\nMessage-ID: <original@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOriginal message text").toString("base64url")});
-      return Response.json({id:"abc123",sizeEstimate:1024,internalDate:"1791720000000",labelIds:["UNREAD"],payload:{headers:[{name:"Subject",value:"Test message"},{name:"From",value:"sender@example.com"}]}});
+      if(path.includes("format=raw"))return Response.json({id:"abc123",threadId:"thread1",labelIds:["INBOX","UNREAD"],raw:Buffer.from("From: Sender <sender@example.com>\r\nReply-To: support@example.com\r\nTo: hkudaish@gmail.com\r\nSubject: [MProjDashboard] Test message\r\nMessage-ID: <original@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOriginal message text").toString("base64url")});
+      return Response.json({id:"abc123",sizeEstimate:1024,internalDate:"1791720000000",labelIds:["INBOX","UNREAD"],snippet:"Original message preview",payload:{headers:[{name:"Subject",value:"[MProjDashboard] Test message"},{name:"From",value:"sender@example.com"}]}});
     }
     return new Response(null,{status:404});
   };
@@ -198,6 +198,7 @@ test("Gmail notifications use HTTPS and MIME from the configured Google account"
   configureGmail();assert.equal(await registrationService.registrationMailMode(),"live");
   await registrationService.submitRegistration({name:"Applicant",jobTitle:"موظف",department:"الإدارة",email:"applicant@example.com"});
   assert.ok(gmailSent.length>0);assert.equal(gmailSent[0].parsed.from.value[0].address,"hkudaish@gmail.com");assert.equal(gmailSent[0].parsed.replyTo.value[0].address,"hkudaish@gmail.com");
+  assert.ok(gmailSent[0].parsed.subject.startsWith("[MProjDashboard]"));assert.equal(gmailSent[0].parsed.headers.get("x-mprojdashboard"),"application-mail");
 });
 test("Gmail API inbox is admin-only and replies to the original sender in the same thread", async () => {
   const admin=await adminCookie();
@@ -214,6 +215,24 @@ test("Gmail API inbox is admin-only and replies to the original sender in the sa
   assert.equal((await mailboxRoute.POST(request({id:"abc123",text:"Reply from app"},admin))).status,200);
   assert.equal(gmailSent[0].parsed.to.value[0].address,"support@example.com");assert.equal(gmailSent[0].parsed.from.value[0].address,"hkudaish@gmail.com");assert.equal(gmailSent[0].parsed.inReplyTo,"<original@example.com>");
   assert.equal(gmailSent[0].threadId,"thread1");assert.ok(gmailSent[0].parsed.references.includes("<original@example.com>"));
+  assert.equal(gmailSent[0].parsed.subject,"Re: [MProjDashboard] Test message");
+});
+
+test("personal mail is excluded from lists and cannot be opened or replied to through the application", async () => {
+  const admin=await adminCookie();configureGmail();const normalFetch=globalThis.fetch;const requested=[];
+  globalThis.fetch=async (url,options)=>{
+    const path=String(url);requested.push(path);
+    if(path.includes("/messages?"))return Response.json({messages:[{id:"abc123"},{id:"abc456"},{id:"abc789"}]});
+    if(path.includes("/messages/abc456"))return Response.json({id:"abc456",labelIds:["INBOX","UNREAD"],payload:{headers:[{name:"Subject",value:"Personal bank statement"}]}});
+    if(path.includes("/messages/abc789"))return Response.json({id:"abc789",labelIds:["SENT"],payload:{headers:[{name:"Subject",value:"[MProjDashboard] Sent notification"}]}});
+    return normalFetch(url,options);
+  };
+  const listed=await(await mailboxRoute.GET(request(null,admin,"GET"))).json();assert.deepEqual(listed.messages.map(item=>item.id),["abc123"]);assert.equal(listed.messages[0].preview,"Original message preview");
+  for(const id of ["abc456","abc789"]){
+    assert.equal((await mailboxRoute.GET(new Request(origin+"/api/mailbox?id="+id,{headers:{cookie:admin}}))).status,403);
+    assert.equal((await mailboxRoute.POST(request({id,text:"Do not send"},admin))).status,403);
+  }
+  assert.equal(gmailSent.length,0);assert.equal(requested.some(path=>/abc(?:456|789).*format=raw/.test(path)),false);
 });
 
 test("Google authorization requires an admin, same origin, state and PKCE; tokens are encrypted", async () => {
