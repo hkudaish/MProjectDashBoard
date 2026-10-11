@@ -23,6 +23,29 @@ const store = {
 const seed = { id: "task-1", productId: "digital", productName: "المحتوى الرقمي", title: "مهمة", plannedDate: "2026-10-08", endDate: "2026-10-09", status: "not_started", progress: 0, ownerType: "unassigned", assignee: "", notes: "", sourceOrder: 1, updatedAt: "2026-10-08" };
 const stubs = { "@netlify/blobs": { getStore: () => store }, "zod": { z: require("zod").z }, "node:crypto": require("node:crypto"), "node:util": require("node:util"), "@/lib/task-data": { DEFAULT_TASKS: [seed] } };
 const cache = new Map();
+const gmailSent = [];
+stubs["nodemailer"] = { default: require("nodemailer") };
+function configureGmail() {
+  process.env.GMAIL_USER="hkudaish@gmail.com";
+  process.env.GOOGLE_CLIENT_ID="test-client"; process.env.GOOGLE_CLIENT_SECRET="test-secret";
+  process.env.GOOGLE_REDIRECT_URI=origin+"/api/mailbox/callback"; process.env.GOOGLE_REFRESH_TOKEN="test-refresh";
+  globalThis.fetch=async (url, options={})=>{
+    const path=String(url);
+    if(path==="https://oauth2.googleapis.com/token")return Response.json({access_token:"test-access",refresh_token:"new-refresh",scope:"https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"});
+    assert.ok(path.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/"));
+    assert.equal(options.headers.Authorization,"Bearer test-access");
+    if(path.endsWith("/profile"))return Response.json({emailAddress:"hkudaish@gmail.com"});
+    if(path.endsWith("/messages/send")) {const body=JSON.parse(options.body);gmailSent.push({...body,parsed:await require("mailparser").simpleParser(Buffer.from(body.raw,"base64url"))});return Response.json({id:"sent-api-id"});}
+    if(path.includes("/messages?"))return Response.json({messages:[{id:"abc123"}],nextPageToken:"page_2"});
+    if(path.includes("/messages/abc123")) {
+      if(path.includes("format=raw"))return Response.json({id:"abc123",threadId:"thread1",labelIds:["INBOX","UNREAD"],raw:Buffer.from("From: Sender <sender@example.com>\r\nReply-To: support@example.com\r\nTo: hkudaish@gmail.com\r\nSubject: Test message\r\nMessage-ID: <original@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nOriginal message text").toString("base64url")});
+      return Response.json({id:"abc123",sizeEstimate:1024,internalDate:"1791720000000",labelIds:["UNREAD"],payload:{headers:[{name:"Subject",value:"Test message"},{name:"From",value:"sender@example.com"}]}});
+    }
+    return new Response(null,{status:404});
+  };
+}
+stubs["mailparser"] = { simpleParser: require("mailparser").simpleParser };
+stubs["./local-store"] = { getLocalStore: () => null };
 async function load(path) {
   if (cache.has(path)) return cache.get(path);
   const sourceModule = new vm.SourceTextModule(ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
@@ -41,6 +64,13 @@ const login = await exports("app/api/auth/login/route.ts");
 const users = await exports("app/api/auth/users/route.ts");
 const legacy = await exports("app/api/auth/admins/route.ts");
 const password = await exports("app/api/auth/password/route.ts");
+const registrationRoute = await exports("app/api/registration-requests/route.ts");
+const registrationService = await exports("lib/registration-requests.ts");
+const originalFetch = globalThis.fetch;
+const mailboxRoute = await exports("app/api/mailbox/route.ts");
+const gmailApi = await exports("lib/gmail-api.ts");
+const gmailConnect = await exports("app/api/mailbox/connect/route.ts");
+const gmailCallback = await exports("app/api/mailbox/callback/route.ts");
 const reset = await exports("app/api/auth/password-reset/route.ts");
 const session = await exports("app/api/auth/session/route.ts");
 const tasks = await exports("app/api/tasks/route.ts");
@@ -74,6 +104,11 @@ async function newUser(admin, email, role = "editor") {
   assert.equal(response.status, 201, await response.clone().text()); return response;
 }
 beforeEach(() => {
+  gmailSent.length = 0;
+  delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET; delete process.env.GOOGLE_REDIRECT_URI; delete process.env.GOOGLE_REFRESH_TOKEN; delete process.env.GMAIL_TOKEN_SECRET;
+  delete process.env.GMAIL_APP_PASSWORD; delete process.env.GMAIL_USER; delete process.env.REGISTRATION_MAIL_PROVIDER;
+  globalThis.fetch = originalFetch;
+  delete process.env.RESEND_API_KEY; delete process.env.REGISTRATION_MAIL_FROM;
   data.clear(); revision = 0; writes = 0; leaderSetup = undefined;
   process.env.NODE_ENV = "production"; delete process.env.TASK_STORE_MODE;
   process.env.ADMIN_EMAILS = "admin@example.com,other@example.com";
@@ -81,6 +116,149 @@ beforeEach(() => {
   process.env.ADMIN_SESSION_SECRET = "test-session-secret-32-characters-minimum-only";
   process.env.URL = origin;
   data.set("admin-emails", { etag: "legacy", value: ["stored@example.com"] });
+});
+
+test("registration is public, validated and deduplicated, and review data stays private", async () => {
+  const admin=await adminCookie();
+  const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",email:"applicant@example.com"};
+  assert.equal((await registrationRoute.POST(request({...input,email:"invalid"}))).status,400);
+  assert.equal((await registrationRoute.POST(request(input,"","POST","https://foreign.example"))).status,403);
+  for(const response of await Promise.all([registrationRoute.POST(request(input)),registrationRoute.POST(request(input))])) assert.equal(response.status,201);
+  assert.equal((await registrationRoute.GET(request(null,"","GET"))).status,403);
+  const body=await(await registrationRoute.GET(request(null,admin,"GET"))).json();
+  assert.equal(body.requests.length,1);assert.equal(body.mailConfigured,false);
+  assert.equal(body.requests[0].status,"pending");
+  assert.ok(body.requests[0].notifications.every(item=>item.status==="queued"));
+  assert.equal(await accounts.findAccount(input.email),null);
+  assert.equal((await registrationRoute.PATCH(request({id:body.requests[0].id,status:"approved"}))).status,403);
+});
+test("mail setup identifies the restricted Resend test sender", async () => {
+  assert.equal(await registrationService.registrationMailMode(),"unconfigured");
+  process.env.RESEND_API_KEY="test-key";process.env.REGISTRATION_MAIL_FROM="onboarding@resend.dev";
+  assert.equal(await registrationService.registrationMailMode(),"test");
+  process.env.REGISTRATION_MAIL_FROM="Notifications <onboarding@resend.dev>";
+  assert.equal(await registrationService.registrationMailMode(),"test");
+  process.env.REGISTRATION_MAIL_FROM="noreply@example.com";
+  assert.equal(await registrationService.registrationMailMode(),"live");
+});
+test("approved registration provisions once, sends separate approval and activation messages, and forces password change", async () => {
+  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",email:"applicant@example.com"};
+  const sent=[];globalThis.fetch=async(url,options)=>{assert.equal(url,"https://api.resend.com/emails");sent.push({body:JSON.parse(options.body),key:options.headers["Idempotency-Key"]});return new Response(JSON.stringify({id:"sent"}),{status:200});};
+  process.env.RESEND_API_KEY="test-key";process.env.REGISTRATION_MAIL_FROM="noreply@example.com";
+  assert.equal((await registrationRoute.POST(request(input))).status,201);
+  const row=(await(await registrationRoute.GET(request(null,admin,"GET"))).json()).requests[0];
+  const accountInput={name:input.name,email:input.email,position:"project_manager",entityId:"wamy",password:temporaryPassword,registrationRequestId:row.id};
+  assert.equal((await users.POST(request(accountInput,admin))).status,400);
+  assert.equal((await registrationRoute.PATCH(request({id:row.id,status:"approved"},admin,"PATCH"))).status,200);
+  assert.ok(sent.some(item=>item.body.to[0]===input.email&&item.body.subject==="الموافقة على طلب تسجيلك"));
+  assert.equal((await users.POST(request({...accountInput,email:"other-applicant@example.com"},admin))).status,400);
+  assert.equal((await users.POST(request(accountInput,admin))).status,201);
+  const first=await accounts.findAccount(input.email);assert.equal(first.registrationRequestId,row.id);
+  assert.equal(first.mustChangePassword,true);assert.equal(first.active,true);
+  assert.equal((await signIn(input.email,temporaryPassword)).status,200);
+  const activated=(await(await registrationRoute.GET(request(null,admin,"GET"))).json()).requests[0];assert.equal(activated.status,"activated");
+  assert.ok(sent.some(item=>item.body.to[0]===input.email&&item.body.subject==="تم تفعيل حسابك"));
+  assert.ok(sent.every(item=>!item.body.text.includes(temporaryPassword)));
+  const beforeReplay=sent.length;assert.equal((await users.POST(request(accountInput,admin))).status,201);
+  assert.equal(sent.length,beforeReplay);assert.equal((await accounts.findAccount(input.email)).passwordHash,first.passwordHash);
+  assert.equal(new Set(sent.map(item=>item.key)).size,sent.length);
+});
+test("registration hold and rejection notify the applicant, and failed delivery can be retried", async () => {
+  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"موظف",department:"الإدارة",email:"applicant@example.com"};
+  await registrationRoute.POST(request(input));const row=(await registrationService.listRegistrations())[0];
+  for(const status of ["on_hold","rejected"]){assert.equal((await registrationRoute.PATCH(request({id:row.id,status,note:"Review note"},admin,"PATCH"))).status,200);}
+  const reviewed=(await registrationService.listRegistrations())[0];
+  assert.equal(reviewed.status,"rejected");assert.equal(reviewed.notifications.filter(item=>item.to===input.email).length,2);
+  assert.ok(reviewed.notifications.filter(item=>item.to===input.email).every(item=>item.text.includes("Review note")));
+  await registrationRoute.PATCH(request({id:row.id,status:"rejected",note:"Review note"},admin,"PATCH"));
+  assert.equal((await registrationService.listRegistrations())[0].notifications.length,reviewed.notifications.length);
+  process.env.RESEND_API_KEY="test-key";process.env.REGISTRATION_MAIL_FROM="noreply@example.com";
+  globalThis.fetch=async()=>new Response("failure",{status:503});
+  await registrationService.flushRegistrationEmails();
+  assert.equal((await registrationService.listRegistrations())[0].notifications[0].status,"failed");
+  globalThis.fetch=async()=>new Response(JSON.stringify({id:"sent"}),{status:200});
+  assert.equal((await registrationRoute.PUT(request(null,admin,"PUT"))).status,200);
+  assert.ok((await registrationService.listRegistrations())[0].notifications.every(item=>item.status==="sent"));
+  assert.equal((await users.POST(request({name:input.name,email:input.email,position:"employee",password:temporaryPassword,registrationRequestId:row.id},admin))).status,400);
+});
+test("registration activation recovers after account creation is interrupted", async () => {
+  await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الإدارة",email:"applicant@example.com"};
+  await registrationService.submitRegistration(input);const row=(await registrationService.listRegistrations())[0];
+  await registrationService.reviewRegistration({id:row.id,status:"approved",note:""},"admin@example.com");
+  await accounts.createUser({name:input.name,email:input.email,position:"project_manager",managerEmail:null,additionalManagerEmail:null,entityId:null,password:temporaryPassword,registrationRequestId:row.id});
+  assert.equal((await registrationService.listRegistrations())[0].status,"activated");
+  assert.equal((await registrationService.listRegistrations())[0].notifications.filter(item=>item.subject==="تم تفعيل حسابك").length,1);
+});
+
+test("Gmail notifications use HTTPS and MIME from the configured Google account", async () => {
+  await adminCookie();process.env.REGISTRATION_MAIL_PROVIDER="gmail";
+  assert.equal(await registrationService.registrationMailConfigured(),false);
+  process.env.GMAIL_APP_PASSWORD="unused-app-password";
+  assert.equal(await registrationService.registrationMailConfigured(),false);
+  configureGmail();assert.equal(await registrationService.registrationMailMode(),"live");
+  await registrationService.submitRegistration({name:"Applicant",jobTitle:"موظف",department:"الإدارة",email:"applicant@example.com"});
+  assert.ok(gmailSent.length>0);assert.equal(gmailSent[0].parsed.from.value[0].address,"hkudaish@gmail.com");assert.equal(gmailSent[0].parsed.replyTo.value[0].address,"hkudaish@gmail.com");
+});
+test("Gmail API inbox is admin-only and replies to the original sender in the same thread", async () => {
+  const admin=await adminCookie();
+  assert.equal((await mailboxRoute.GET(request(null,"","GET"))).status,403);
+  const missing=await(await mailboxRoute.GET(request(null,admin,"GET"))).json();assert.equal(missing.configured,false);
+  configureGmail();
+  const listed=await(await mailboxRoute.GET(request(null,admin,"GET"))).json();assert.equal(listed.messages[0].id,"abc123");assert.equal(listed.messages[0].unread,true);assert.equal(listed.nextPageToken,"page_2");
+  assert.equal((await mailboxRoute.GET(new Request(origin+"/api/mailbox?id=41:7",{headers:{cookie:admin}}))).status,400);
+  assert.equal((await mailboxRoute.GET(new Request(origin+"/api/mailbox?pageToken=invalid%20token",{headers:{cookie:admin}}))).status,400);
+  const detail=await(await mailboxRoute.GET(new Request(origin+"/api/mailbox?id=abc123",{headers:{cookie:admin}}))).json();assert.equal(detail.message.text.trim(),"Original message text");assert.equal(detail.message.replyTo,"support@example.com");
+  assert.equal((await mailboxRoute.GET(new Request(origin+"/api/mailbox?id=deadbeef",{headers:{cookie:admin}}))).status,503);
+  assert.equal((await mailboxRoute.POST(request({id:"abc123",text:"Reply from app",to:"attacker@example.com"},admin))).status,400);
+  assert.equal((await mailboxRoute.POST(request({id:"abc123",text:"Reply from app"},admin,"POST","https://foreign.example"))).status,403);
+  assert.equal((await mailboxRoute.POST(request({id:"abc123",text:"Reply from app"},admin))).status,200);
+  assert.equal(gmailSent[0].parsed.to.value[0].address,"support@example.com");assert.equal(gmailSent[0].parsed.from.value[0].address,"hkudaish@gmail.com");assert.equal(gmailSent[0].parsed.inReplyTo,"<original@example.com>");
+  assert.equal(gmailSent[0].threadId,"thread1");assert.ok(gmailSent[0].parsed.references.includes("<original@example.com>"));
+});
+
+test("Google authorization requires an admin, same origin, state and PKCE; tokens are encrypted", async () => {
+  const admin=await adminCookie();
+  assert.equal((await gmailConnect.POST(request(null,admin))).status,503);
+  configureGmail();delete process.env.GOOGLE_REFRESH_TOKEN;
+  assert.equal((await gmailConnect.POST(request(null))).status,403);
+  assert.equal((await gmailConnect.POST(request(null,admin,"POST","https://foreign.example"))).status,403);
+  const started=await gmailConnect.POST(request(null,admin));assert.equal(started.status,200);
+  const url=new URL((await started.json()).url);assert.equal(url.origin,"https://accounts.google.com");
+  assert.equal(url.searchParams.get("access_type"),"offline");assert.equal(url.searchParams.get("code_challenge_method"),"S256");
+  assert.equal(url.searchParams.get("scope"),gmailApi.GMAIL_SCOPES.join(" "));
+  const stateCookie=started.headers.get("set-cookie").split(";")[0];assert.ok(started.headers.get("set-cookie").includes("HttpOnly"));assert.ok(started.headers.get("set-cookie").includes("SameSite=Lax"));
+  assert.equal((await gmailCallback.GET(new Request(origin+"/api/mailbox/callback?code=test&state=wrong",{headers:{cookie:stateCookie}}))).headers.get("location"),origin+"/?gmail=error");
+  assert.equal(data.has("gmail-oauth-v1"),false);
+  const response=await gmailCallback.GET(new Request(origin+"/api/mailbox/callback?code=test&state="+url.searchParams.get("state"),{headers:{cookie:stateCookie}}));
+  assert.equal(response.headers.get("location"),origin+"/?gmail=connected");
+  const encrypted=data.get("gmail-oauth-v1").value;assert.equal(encrypted.includes("new-refresh"),false);assert.equal(gmailApi.unseal(encrypted).refreshToken,"new-refresh");
+  assert.equal(await gmailApi.gmailConfigured(),true);
+});
+
+test("the dedicated Gmail encryption key preserves mail access when the session key rotates", async () => {
+  configureGmail();delete process.env.GOOGLE_REFRESH_TOKEN;
+  process.env.GMAIL_TOKEN_SECRET="dedicated-gmail-encryption-key-with-32-characters";
+  await gmailApi.saveRefreshToken("saved-refresh");
+  process.env.ADMIN_SESSION_SECRET="replacement-session-secret-with-32-characters";
+  assert.equal(await gmailApi.gmailConfigured(),true);
+  process.env.GMAIL_TOKEN_SECRET="a-different-mail-encryption-key-with-32-characters";
+  assert.equal(await gmailApi.gmailConfigured(),false);
+});
+
+test("Google callback rejects expired state, stale admin sessions, missing scopes and a different Gmail account", async () => {
+  const admin=await adminCookie();configureGmail();delete process.env.GOOGLE_REFRESH_TOKEN;
+  const account=await accounts.findAccount("admin@example.com");
+  const makeRequest=(values={})=>new Request(origin+"/api/mailbox/callback?code=test&state=test-state",{headers:{cookie:"gmail_oauth_state="+gmailApi.seal({state:"test-state",verifier:"verifier",email:account.email,sessionVersion:account.sessionVersion,expiresAt:Date.now()+600000,...values})}});
+  for (const values of [{expiresAt:1},{sessionVersion:account.sessionVersion+1}]) assert.equal((await gmailCallback.GET(makeRequest(values))).headers.get("location"),origin+"/?gmail=error");
+  const normalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options)=>String(url).endsWith("/token")?Response.json({access_token:"test-access",refresh_token:"new-refresh",scope:gmailApi.GMAIL_SCOPES[0]}):normalFetch(url,options);
+  assert.equal((await gmailCallback.GET(makeRequest())).headers.get("location"),origin+"/?gmail=error");
+  globalThis.fetch=async(url,options)=>String(url).endsWith("/profile")?Response.json({emailAddress:"different@gmail.com"}):normalFetch(url,options);
+  assert.equal((await gmailCallback.GET(makeRequest())).headers.get("location"),origin+"/?gmail=error");
+  assert.equal(data.has("gmail-oauth-v1"),false);
+  // Tampered encrypted tokens fail closed and permit reconnecting.
+  data.set("gmail-oauth-v1",{value:"invalid-ciphertext",etag:"test"});assert.equal(await gmailApi.gmailConfigured(),false);
+  assert.ok(admin);
 });
 
 test("legacy accounts keep existing credentials, migrate once to salted hashes, and require first-login change", async () => {
@@ -341,7 +519,7 @@ test("system director can change their login email without being locked out", as
   assert.equal((await signIn("director@example.com", personalPassword)).status, 200);
   assert.equal((await signIn("admin@example.com", personalPassword)).status, 401);
 });
-test("account deletion removes login access while preserving task history and preventing identity reuse", async () => {
+test("deleted accounts can be restored with the same identity, fresh credentials and preserved task history", async () => {
   const admin = await adminCookie(); await tree(admin); const staffCookie=await personalCookie("staff@example.com");
   const row={id:"historical-row",description:"Historical detail",status:"review",completionDate:"",ownerType:"wamy",assignee:"",assigneeEmail:"staff@example.com"};
   const leader=await personalCookie("leader@example.com");
@@ -354,7 +532,36 @@ test("account deletion removes login access while preserving task history and pr
   assert.equal(data.get("user-accounts-v1").value.find(user=>user.email==="staff@example.com").passwordHash,"");
   assert.deepEqual(data.get("tasks").value,storedBefore);
   assert.equal((await tasks.PATCH(request({id:task.id,notes:"History remains editable"},admin,"PATCH"))).status,200);
-  assert.equal((await users.POST(request({email:"staff@example.com",name:"Reused",position:"employee",managerEmail:"section@example.com",entityId:"wamy",password:temporaryPassword},admin))).status,400);
+  const countBeforeRestore=data.get("user-accounts-v1").value.length;
+  const versionBeforeRestore=data.get("user-accounts-v1").value.find(user=>user.email==="staff@example.com").sessionVersion;
+  const historyBeforeRestore=structuredClone(data.get("tasks").value);
+  const restored=await users.POST(request({email:"staff@example.com",name:"Restored employee",position:"employee",managerEmail:"section@example.com",entityId:"wamy",password:temporaryPassword},admin));
+  assert.equal(restored.status,201);
+  assert.equal((await restored.json()).user.mustChangePassword,true);
+  const account=await accounts.findAccount("staff@example.com");
+  assert.equal(account.deleted,false);assert.equal(account.active,true);
+  assert.equal(account.sessionVersion,versionBeforeRestore+1);
+  assert.equal(account.name,"Restored employee");
+  assert.equal(data.get("user-accounts-v1").value.length,countBeforeRestore);
+  assert.deepEqual(data.get("tasks").value,historyBeforeRestore);
+  assert.equal(await auth.getUserSession(new Headers({cookie:staffCookie})),null);
+  assert.equal((await signIn("staff@example.com",personalPassword)).status,401);
+  const temporaryLogin=await signIn("staff@example.com",temporaryPassword);
+  assert.equal(temporaryLogin.status,200);assert.equal((await temporaryLogin.json()).mustChangePassword,true);
+  assert.equal((await users.POST(request({email:"staff@example.com",name:"Duplicate",position:"employee",password:temporaryPassword},admin))).status,400);
+});
+test("restoration validates reporting links and permissions and cannot reuse a deleted login alias", async () => {
+  const admin=await adminCookie();await tree(admin);const manager=await personalCookie("department@example.com");
+  assert.equal((await users.DELETE(request({email:"staff@example.com"},admin,"DELETE"))).status,200);
+  const payload={email:"staff@example.com",name:"Restored",position:"employee",managerEmail:"department@example.com",entityId:"wamy",password:temporaryPassword};
+  assert.equal((await users.POST(request(payload,admin))).status,400);
+  assert.equal(await accounts.findAccount("staff@example.com"),null);
+  assert.equal((await users.POST(request({...payload,managerEmail:"section@example.com"},manager))).status,403);
+  assert.equal(await accounts.findAccount("staff@example.com"),null);
+  assert.equal((await users.POST(request({...payload,managerEmail:"section@example.com"},admin))).status,201);
+  assert.equal((await users.PATCH(request({email:"staff@example.com",newEmail:"renamed@example.com"},admin,"PATCH"))).status,200);
+  assert.equal((await users.DELETE(request({email:"staff@example.com"},admin,"DELETE"))).status,200);
+  assert.equal((await users.POST(request({...payload,email:"renamed@example.com",managerEmail:"section@example.com"},admin))).status,400);
 });
 test("account deletion protects supervisors and self and is restricted to the system director", async () => {
   const admin=await adminCookie();await tree(admin);const manager=await personalCookie("department@example.com");

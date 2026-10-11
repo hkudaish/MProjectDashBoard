@@ -1,5 +1,6 @@
 import { adminSessionCookie, createAdminSessionToken, getSystemAdminSession, hasSameOrigin } from "@/lib/admin-auth";
 import { createUser, createUserSchema, listUsers, updateUserSchema, HIERARCHY_ERRORS, ACCOUNT_ERRORS, deleteUser, emailSchema, findAccount, updateUser } from "@/lib/user-accounts";
+import { approvedRegistration, activateRegistration, RegistrationError } from "@/lib/registration-requests";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   if (!(await getSystemAdminSession(request.headers))) return Response.json({ error: "إدارة الحسابات متاحة لمسؤول النظام بعد تغيير كلمة المرور." }, { status: 403 });
@@ -11,8 +12,23 @@ export async function POST(request: Request) {
   if (!(await getSystemAdminSession(request.headers))) return Response.json({ error: "إضافة الحسابات متاحة لمسؤول النظام بعد تغيير كلمة المرور." }, { status: 403 });
   const parsed = createUserSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
-  try { return Response.json({ user: await createUser(parsed.data) }, { status: 201, headers: { "Cache-Control": "no-store" } }); }
-  catch (error) { return Response.json({ error: error instanceof Error && (error.message === "يوجد حساب بهذا البريد الإلكتروني بالفعل." || HIERARCHY_ERRORS.includes(error.message)) ? error.message : "تعذر إنشاء الحساب." }, { status: 400 }); }
+  try {
+    const id = parsed.data.registrationRequestId;
+    if (id) {
+      const existing = await findAccount(parsed.data.email);
+      if (existing?.active && existing.registrationRequestId === id) {
+        await activateRegistration(id, existing.email);
+        return Response.json({ user: (await listUsers()).find(user => user.email === existing.email) }, { status: 201 });
+      }
+      await approvedRegistration(id, parsed.data.email);
+    }
+    const user = await createUser(parsed.data);
+    let notificationWarning: string | undefined;
+    if (id) try { await activateRegistration(id, user.email); }
+    catch { notificationWarning = "تم إنشاء الحساب؛ سيستكمل إشعار التفعيل عند تحديث طلبات التسجيل."; }
+    return Response.json({ user, notificationWarning }, { status: 201, headers: { "Cache-Control": "no-store" } });
+  }
+  catch (error) { return Response.json({ error: error instanceof RegistrationError || error instanceof Error && (error.message === "يوجد حساب بهذا البريد الإلكتروني بالفعل." || HIERARCHY_ERRORS.includes(error.message)) ? error.message : "تعذر إنشاء الحساب." }, { status: 400 }); }
 }
 export async function PATCH(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });

@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import { getLocalStore } from "./local-store";
 import { z } from "zod";
 import type { Entity } from "./user-types";
 export const entityInputSchema = z.object({ name: z.string().trim().min(1, "أدخل اسم الجهة.").max(120), description: z.string().trim().max(1200).default("") });
@@ -6,7 +7,7 @@ const schema = entityInputSchema.extend({ id: z.string().min(1), hidden: z.boole
 const defaults: Entity[] = [{ id: "wamy", name: "الندوة العالمية", description: "", hidden: false }, { id: "vendor", name: "الشركة المنفذة", description: "", hidden: false }];
 const memory = new Map<string, Entity>();
 export function createEntityStore() {
-  const store = process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null;
+  const store = getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
   return {
     async getEntities(): Promise<Entity[]> {
       const raw = store ? await store.get("entities", { type: "json" }) : [...memory.values()];

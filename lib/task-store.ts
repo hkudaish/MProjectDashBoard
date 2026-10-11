@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import { getLocalStore } from "./local-store";
 import { taskDetailsSchema } from "./task-details";
 import { progressForStatus } from "./task-progress";
 import type { Task, TaskStatus } from "./types";
@@ -80,11 +81,12 @@ function createFallbackStore(): TaskStore {
 }
 
 export function createTaskStore(): TaskStore {
-  if (process.env.NODE_ENV !== "production" || process.env.TASK_STORE_MODE === "memory") {
+  const local = getLocalStore();
+  if (!local && (process.env.NODE_ENV !== "production" || process.env.TASK_STORE_MODE === "memory")) {
     return createFallbackStore();
   }
 
-  const store = getStore(STORE_NAME, { consistency: "strong" });
+  const store = local ?? getStore(STORE_NAME, { consistency: "strong" });
   return {
     async getTasks() {
       const tasks = await store.get(TASKS_KEY, { type: "json" }) as unknown;

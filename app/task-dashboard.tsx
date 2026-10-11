@@ -26,6 +26,7 @@ import {
   Settings,
   Sparkles,
   UserPlus,
+  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProjectClock } from "@/components/project-clock";
@@ -44,6 +45,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { EntityManager } from "@/components/entity-manager";
 import { TaskAssigneeSelect } from "@/components/task-assignee-select";
 import { UserAccountManager } from "@/components/user-account-manager";
+import { MailboxDialog } from "@/components/mailbox-dialog";
+import { RegistrationRequestDialog, RegistrationReviewDialog, useRegistrationCount } from "@/components/registration-dialogs";
+import type { RegistrationRequest } from "@/lib/registration-types";
 import { PasswordChangeDialog, PasswordResetRequestDialog } from "@/components/password-dialogs";
 import { DEFAULT_PROJECT, projectInputSchema } from "@/lib/projects";
 import { POSITIONS, type Entity, type PublicUser, type SessionInfo } from "@/lib/user-types";
@@ -220,7 +224,19 @@ export function TaskDashboard() {
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
   const [adminManagerOpen, setAdminManagerOpen] = useState(false);
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [registrationReviewOpen, setRegistrationReviewOpen] = useState(false);
+  const [mailboxOpen, setMailboxOpen] = useState(false);
+  const [approvedRequest, setApprovedRequest] = useState<RegistrationRequest | null>(null);
   const [userSession, setUserSession] = useState<SessionInfo | null>(null);
+  const registrationCount = useRegistrationCount(Boolean(userSession?.canManageUsers));
+  useEffect(() => {
+    if (!userSession?.canManageUsers) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("mailbox") !== "1" && !params.has("gmail")) return;
+    const timer = setTimeout(() => setMailboxOpen(true), 0);
+    return () => clearTimeout(timer);
+  }, [userSession?.canManageUsers]);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [resetRequestOpen, setResetRequestOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -348,6 +364,9 @@ export function TaskDashboard() {
       setEntitiesOpen(false);
       setAssignmentUsers([]);
       setAdminManagerOpen(false);
+      setRegistrationReviewOpen(false);
+      setMailboxOpen(false);
+      setApprovedRequest(null);
       setIsAdmin(false);
       setAdminEmail("");
       setEditing(null);
@@ -590,6 +609,14 @@ export function TaskDashboard() {
           <div className="flex shrink-0 items-center gap-2">
             <DropdownMenu dir="rtl"><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-xl border-teal-100 bg-teal-50/50 text-teal-900"><Settings className="size-4" /><span>الإعدادات</span></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">
+                <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => setRegistrationOpen(true)}><UserPlus className="size-4" />طلب تسجيل</DropdownMenuItem>
+                {userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setRegistrationReviewOpen(true)}><ListChecks className="size-4" />طلبات التسجيل{registrationCount > 0 && <span className="ms-auto rounded-full bg-amber-100 px-2 text-xs font-bold text-amber-800">{registrationCount}</span>}</DropdownMenuItem>}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="gap-2 rounded-lg" disabled={authLoading} onSelect={() => {
+                  if (!userSession?.authenticated) { setLoginError(""); setLoginOpen(true); }
+                  else if (userSession.canManageUsers) setMailboxOpen(true);
+                  else toast.error("البريد الإلكتروني متاح لمدير النظام فقط.");
+                }}><Mail className="size-4" />البريد الإلكتروني</DropdownMenuItem>
                 <DropdownMenuLabel className="space-y-1 px-3 py-2"><p className="text-xs font-normal text-slate-500">الحساب الحالي</p>{userSession?.authenticated ? <><p className="font-bold text-teal-900">{userSession.position ? POSITIONS[userSession.position] : "مستخدم"}</p><p dir="ltr" className="break-all text-right text-xs font-normal text-slate-600">{userSession.loginEmail ?? adminEmail}</p></> : <p className="text-sm text-slate-600">لم تسجّل الدخول</p>}</DropdownMenuLabel>
                 {userSession?.authenticated && <><DropdownMenuSeparator /><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setPasswordOpen(true)}><KeyRound className="size-4" />تغيير كلمة المرور</DropdownMenuItem>
                   {userSession.canManageUsers && <><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setAdminManagerOpen(true)}><UserPlus className="size-4" />إدارة المستخدمين</DropdownMenuItem><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setEntitiesOpen(true)}><Building2 className="size-4" />إدارة الجهات</DropdownMenuItem></>}
@@ -751,7 +778,10 @@ export function TaskDashboard() {
       </Dialog>
 
       <EntityManager open={entitiesOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setEntitiesOpen} onChanged={refreshAdministration} />
-      <UserAccountManager onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setAdminManagerOpen} currentEmail={adminEmail} />
+      <RegistrationRequestDialog open={registrationOpen} onOpenChange={setRegistrationOpen} />
+      <MailboxDialog open={mailboxOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setMailboxOpen} />
+      <RegistrationReviewDialog open={registrationReviewOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setRegistrationReviewOpen} onApproved={request => { setApprovedRequest(request); setAdminManagerOpen(true); }} />
+      <UserAccountManager initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
       <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 

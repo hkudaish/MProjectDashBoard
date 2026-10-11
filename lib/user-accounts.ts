@@ -1,4 +1,5 @@
 import { getStore } from "@netlify/blobs";
+import { getLocalStore } from "./local-store";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -15,12 +16,12 @@ export const positionSchema = z.enum(Object.keys(POSITIONS) as [Position, ...Pos
 const managerLink = emailSchema.or(z.literal("")).nullable().transform((value) => value || null);
 const reportingSelection = positionSchema;
 const entityLink = z.string().trim().max(120).nullable().transform((value) => value || null);
-export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), password: passwordSchema });
+export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), password: passwordSchema }).extend({ registrationRequestId: z.string().uuid().optional() });
 export const updateUserSchema = z.object({ email: emailSchema, newEmail: emailSchema.optional(), name: z.string().trim().min(1).max(120).optional(), position: positionSchema.optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), managerPosition: reportingSelection.optional(), entityId: entityLink.optional(), active: z.boolean().optional(), temporaryPassword: passwordSchema.optional() }).strict().refine((value) => Object.keys(value).some((key) => key !== "email"), "اختر التعديل المطلوب.");
 export const HIERARCHY_ERRORS = ["حدد المنصب والمسؤول المباشر.", "مدير النظام مستقل ولا يرتبط بمسؤول مباشر أو جهة.", "المسؤول المباشر غير متوافق مع الهيكل الإداري.", "لا يمكن ربط المستخدم بنفسه أو تكوين ارتباط إداري دائري.", "الجهة المحددة غير متاحة للاختيار.", "تعديل المنصب أو تعطيل المسؤول يتعارض مع ارتباطات مستخدمين تابعين له. عدّل ارتباطاتهم أولًا."];
 export const ACCOUNT_ERRORS = ["يوجد حساب بهذا البريد الإلكتروني بالفعل.", "لا يمكنك حذف حسابك الحالي.", "الحساب مرتبط بمستخدمين تابعين. عدّل ارتباطاتهم قبل الحذف."];
 const accountSchema = z.object({
-  loginEmail: emailSchema.optional(), deleted: z.boolean().optional(),
+  loginEmail: emailSchema.optional(), deleted: z.boolean().optional(), registrationRequestId: z.string().uuid().optional(),
   position: positionSchema.nullable().optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), entityId: entityLink.optional(),
   email: emailSchema, name: z.string(), role: z.enum(["admin", "editor", "viewer"]), active: z.boolean(),
   passwordHash: z.string().regex(/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/).or(z.literal("")),
@@ -31,7 +32,7 @@ type Account = z.infer<typeof accountSchema>;
 let memory: { data: Account[]; etag: string } | null = null;
 let memoryVersion = 0;
 function accountStore() {
-  return process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null;
+  return getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
 }
 async function snapshot() {
   const store = accountStore();
@@ -146,9 +147,14 @@ export async function createUser(input: z.infer<typeof createUserSchema>) {
   const parsed = createUserSchema.parse(input);
   const passwordHash = await hashPassword(parsed.password);
   return updateRegistry(async (accounts) => {
-    if (accounts.some((a) => a.email === parsed.email || a.loginEmail === parsed.email)) throw new Error("يوجد حساب بهذا البريد الإلكتروني بالفعل.");
-    const account: Account = { email: parsed.email, loginEmail: parsed.email, name: parsed.name, role: roleForPosition(parsed.position), position: parsed.position, managerEmail: parsed.managerEmail, additionalManagerEmail: parsed.additionalManagerEmail, entityId: parsed.entityId, active: true, passwordHash, mustChangePassword: true, sessionVersion: 1, resetRequestedAt: null, failedAttempts: 0, lockedUntil: 0 };
-    accounts.push(account);
+    const matches = accounts.filter((a) => a.email === parsed.email || a.loginEmail === parsed.email);
+    // Restore the same deleted identity, keeping historical assignments attached.
+    // A retired login alias cannot take over a different internal identity.
+    const previous = matches.length === 1 && matches[0].deleted && matches[0].email === parsed.email ? matches[0] : undefined;
+    if (matches.length && !previous) throw new Error("يوجد حساب بهذا البريد الإلكتروني بالفعل.");
+    const account: Account = { email: parsed.email, loginEmail: parsed.email, name: parsed.name, role: roleForPosition(parsed.position), position: parsed.position, managerEmail: parsed.managerEmail, additionalManagerEmail: parsed.additionalManagerEmail, entityId: parsed.entityId, active: true, passwordHash, mustChangePassword: true, sessionVersion: previous ? previous.sessionVersion + 1 : 1, resetRequestedAt: null, failedAttempts: 0, lockedUntil: 0, ...(previous ? { deleted: false } : {}), ...(parsed.registrationRequestId ? { registrationRequestId: parsed.registrationRequestId } : {}) };
+    if (previous) accounts[accounts.indexOf(previous)] = account;
+    else accounts.push(account);
     await validateHierarchy(accounts, account.email, undefined, parsed.managerPosition);
     return publicUser(account);
   });
@@ -200,7 +206,7 @@ export async function requestPasswordReset(email: string) {
   });
 }
 
-// Keep the internal account identifier and historical assignments reserved after deletion.
+// Keep the internal identity and historical assignments for an administrator to restore.
 export async function deleteUser(email: string, actorEmail: string) {
   return updateRegistry((accounts) => {
     const account = accounts.find((user) => user.email === normalizeAdminEmail(email) && !user.deleted);

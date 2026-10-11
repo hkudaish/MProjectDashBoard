@@ -14,6 +14,7 @@ let reads = 0;
 let writes = 0;
 const seed = { id: "existing", productId: "digital", productName: "المحتوى الرقمي", title: "المهمة الحالية", plannedDate: "2026-10-01", endDate: "2026-10-08", status: "completed", progress: 100, ownerType: "wamy", assignee: "", notes: "", sourceOrder: 1, updatedAt: "2026-10-01" };
 const stubs = {
+  "./local-store": { getLocalStore: () => null },
   "@/lib/task-assignment": { normalizeTaskAssignments: async (actor, task) => task, normalizeProductDetails: async (actor, details) => details, taskPermissions: () => ({ canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] }), TaskPolicyError: class extends Error {} },
   "@/lib/user-accounts": { listUsers: async () => [] },
   "zod": { z: createRequire(import.meta.url)("zod").z },
