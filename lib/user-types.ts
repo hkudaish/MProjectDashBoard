@@ -9,7 +9,7 @@ export const POSITIONS = {
   department_manager: "مدير الإدارة",
   project_manager: "مدير المشروع",
   section_head: "رئيس القسم",
-  employee: "الموظف",
+  employee: "موظف",
 } as const;
 export type Position = keyof typeof POSITIONS;
 export const LEADERSHIP_POSITIONS: Position[] = ["secretary_general", "assistant_secretary_general", "executive_assistant"];

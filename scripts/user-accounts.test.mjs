@@ -118,7 +118,7 @@ test("audit describes account events while omitting passwords and preserving old
   assert.equal((await users.POST(resourceRequest("auth/users", input, admin, "POST"))).status, 201);
   const created = data.get("activity-log-v1").value.at(-1);
   assert.ok(created.resource.includes(input.name));
-  assert.ok(created.details.some(value => value.includes("الموظف")));
+  assert.ok(created.details.some(value => value.includes("المنصب: موظف")));
   assert.ok(created.details.some(value => value.includes("الندوة العالمية")));
   assert.equal((await users.PATCH(resourceRequest("auth/users", { email: input.email, temporaryPassword: "NewPrivateSecret123" }, admin, "PATCH"))).status, 200);
   assert.equal(data.get("activity-log-v1").value.at(-1).action, "إعادة ضبط كلمة مرور المستخدم");
