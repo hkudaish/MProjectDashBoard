@@ -1,3 +1,4 @@
+import { withActivity } from "@/lib/activity-log";
 import { listUsers } from "@/lib/user-accounts";
 import { createEntityStore } from "@/lib/entity-store";
 import { normalizeTaskAssignments, taskPermissions, TaskPolicyError } from "@/lib/task-assignment";
@@ -59,7 +60,7 @@ export async function GET(request?: Request) {
   }
 }
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   try {
     const session = await getUserSession(request.headers);
     if (!session || session.mustChangePassword) {
@@ -122,7 +123,7 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const session = await getAdminSession(request.headers);
   if (!session) return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول." }, { status: 401 });
   const parsed = taskInputSchema.safeParse(await request.json().catch(() => null));
@@ -138,3 +139,7 @@ export async function POST(request: Request) {
     return Response.json({ task: { ...task, permissions: taskPermissions(session, task, await listUsers()) } }, { status: 201 });
   } catch (error) { if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status }); return Response.json({ error: "تعذر حفظ المهمة." }, { status: 500 }); }
 }
+
+export const PATCH = withActivity("تعديل", handlePATCH);
+
+export const POST = withActivity("إضافة", handlePOST);

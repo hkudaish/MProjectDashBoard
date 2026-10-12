@@ -66,6 +66,8 @@ const legacy = await exports("app/api/auth/admins/route.ts");
 const password = await exports("app/api/auth/password/route.ts");
 const registrationRoute = await exports("app/api/registration-requests/route.ts");
 const registrationService = await exports("lib/registration-requests.ts");
+const chatRoute = await exports("app/api/chat/route.ts");
+const activityRoute = await exports("app/api/activity/route.ts");
 const originalFetch = globalThis.fetch;
 const mailboxRoute = await exports("app/api/mailbox/route.ts");
 const gmailApi = await exports("lib/gmail-api.ts");
@@ -116,6 +118,65 @@ beforeEach(() => {
   process.env.ADMIN_SESSION_SECRET = "test-session-secret-32-characters-minimum-only";
   process.env.URL = origin;
   data.set("admin-emails", { etag: "legacy", value: ["stored@example.com"] });
+});
+async function chatUser(admin, email, name) {
+  const response=await users.POST(request({email,name,position:"employee",entityId:"wamy",password:temporaryPassword},admin));assert.equal(response.status,201);
+  const first=await signIn(email,temporaryPassword);
+  const changed=await password.POST(request({currentPassword:temporaryPassword,newPassword:personalPassword},cookie(first)));assert.equal(changed.status,200);return cookie(changed);
+}
+function chatGet(user, query="") { return chatRoute.GET(new Request(origin+"/api/chat"+query,{headers:{cookie:user}})); }
+test("chat is private to participants, counts unread messages, and requires a changed-password session", async () => {
+  const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob"), c=await chatUser(admin,"carol@example.com","Carol");
+  assert.equal((await chatGet("")).status,403);
+  await users.POST(request({email:"temporary@example.com",name:"Temporary",position:"employee",password:temporaryPassword},admin));
+  assert.equal((await chatGet(cookie(await signIn("temporary@example.com",temporaryPassword)))).status,403);
+  assert.equal((await chatRoute.POST(request({recipient:"bob@example.com",text:"Private message"},a,"POST","https://foreign.example"))).status,403);
+  assert.equal((await chatRoute.POST(request({recipient:"bob@example.com",text:"Private message",sender:"carol@example.com"},a))).status,400);
+  const sent=await chatRoute.POST(request({recipient:"bob@example.com",text:"Private message"},a));assert.equal(sent.status,201);
+  const message=(await sent.json()).message;
+  assert.equal((await(await chatGet(b)).json()).unread,1);assert.equal((await(await chatGet(a)).json()).unread,0);
+  assert.equal((await(await chatGet(c,"?peer=bob@example.com")).json()).messages.length,0);
+  assert.equal((await chatGet(c,"?supervise=1")).status,403);
+  assert.equal((await chatRoute.PATCH(request({id:message.id,action:"edit",text:"Forged"},b,"PATCH"))).status,403);
+  assert.equal((await chatRoute.PUT(request({peer:"alice@example.com"},b,"PUT"))).status,200);
+  assert.equal((await(await chatGet(b)).json()).unread,0);
+  assert.ok((await(await chatGet(a,"?peer=bob@example.com")).json()).messages[0].readAt);
+  await users.PATCH(request({email:"bob@example.com",active:false},admin,"PATCH"));
+  assert.equal((await chatRoute.POST(request({recipient:"bob@example.com",text:"Inactive"},a))).status,400);
+});
+test("chat edit and recall stop at exactly one minute; personal deletion and administrator removal have separate scopes", async () => {
+  const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob");
+  const message=(await(await chatRoute.POST(request({recipient:"bob@example.com",text:"First text"},a))).json()).message;
+  const originalNow=Date.now, start=Date.parse(message.createdAt);
+  try {
+    Date.now=()=>start+59999;
+    assert.equal((await chatRoute.PATCH(request({id:message.id,action:"edit",text:"Edited text"},a,"PATCH"))).status,200);
+    Date.now=()=>start+60000;
+    for(const action of ["edit","recall"]) assert.equal((await chatRoute.PATCH(request({id:message.id,action,text:"Too late"},a,"PATCH"))).status,400);
+    assert.equal((await chatRoute.PATCH(request({id:message.id,action:"delete"},a,"PATCH"))).status,200);
+    assert.equal((await(await chatGet(a,"?peer=bob@example.com")).json()).messages.length,0);
+    assert.equal((await(await chatGet(b,"?peer=alice@example.com")).json()).messages[0].text,"Edited text");
+    assert.equal((await chatRoute.PATCH(request({id:message.id,action:"remove"},b,"PATCH"))).status,403);
+    assert.equal((await(await chatGet(admin,"?supervise=1")).json()).messages[0].text,"Edited text");
+    assert.equal((await chatRoute.PATCH(request({id:message.id,action:"remove"},admin,"PATCH"))).status,200);
+    const removed=(await(await chatGet(b,"?peer=alice@example.com")).json()).messages[0];assert.equal(removed.text,"");assert.ok(removed.removedAt);
+    assert.equal((await(await chatGet(b)).json()).unread,0);
+  } finally { Date.now=originalNow; }
+  const second=(await(await chatRoute.POST(request({recipient:"bob@example.com",text:"Recall me"},a))).json()).message;
+  assert.equal((await chatRoute.PATCH(request({id:second.id,action:"recall"},a,"PATCH"))).status,200);
+  const recalled=(await(await chatGet(b,"?peer=alice@example.com")).json()).messages.find(m=>m.id===second.id);assert.ok(recalled.recalledAt);assert.equal(recalled.text,"");
+});
+test("concurrent chat sends survive persistence and audit logs protect identities and administrator-only deletion", async () => {
+  const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob");
+  const responses=await Promise.all(Array.from({length:5},(_,i)=>chatRoute.POST(request({recipient:"bob@example.com",text:"Sensitive chat text "+i},a))));assert.ok(responses.every(r=>r.status===201));
+  assert.equal((await(await chatGet(b)).json()).unread,5);
+  const own=await(await activityRoute.GET(request(null,a,"GET"))).json();assert.ok(own.entries.some(e=>e.action==="إرسال رسالة"));assert.ok(own.entries.every(e=>e.actorEmail==="alice@example.com"));
+  const all=await(await activityRoute.GET(request(null,admin,"GET"))).json();assert.ok(all.entries.some(e=>e.actorName==="Alice"));assert.ok(all.entries.every(e=>e.id&&e.action&&e.createdAt&&e.actorName));
+  assert.ok(!JSON.stringify(all).includes(personalPassword));assert.ok(!JSON.stringify(all).includes("Sensitive chat text"));
+  assert.equal((await activityRoute.DELETE(request({},a,"DELETE"))).status,403);
+  assert.equal((await activityRoute.DELETE(request({},admin,"DELETE","https://foreign.example"))).status,403);
+  assert.equal((await activityRoute.DELETE(request({},admin,"DELETE"))).status,200);
+  const cleared=await(await activityRoute.GET(request(null,admin,"GET"))).json();assert.equal(cleared.entries.length,1);assert.equal(cleared.entries[0].action,"مسح سجل العمليات");
 });
 
 test("registration is public, validated and deduplicated, and review data stays private", async () => {

@@ -1,3 +1,4 @@
+import { withActivity } from "@/lib/activity-log";
 import { normalizeProductDetails, TaskPolicyError } from "@/lib/task-assignment";
 import { getAdminSession, getSystemAdminSession, hasSameOrigin } from "@/lib/admin-auth";
 import { createProjectStore } from "@/lib/project-store";
@@ -10,7 +11,7 @@ export async function GET() {
   try { return Response.json({ products: await createProductStore().getProducts() }, { headers: { "Cache-Control": "no-store" } }); }
   catch { return Response.json({ error: "تعذر تحميل المنتجات." }, { status: 500 }); }
 }
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   const session = await getAdminSession(request.headers);
   if (!session || !["system_admin", "project_manager"].includes(session.position ?? "")) return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول." }, { status: 401 });
   const body = await request.json().catch(() => null);
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
   } catch (error) { if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status }); return Response.json({ error: "تعذر حفظ المنتج." }, { status: 500 }); }
 }
 
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   const session = await getSystemAdminSession(request.headers);
   if (!hasSameOrigin(request) || !session) return Response.json({ error: "تعديل المنتجات متاح لمسؤول النظام فقط." }, { status: 403 });
   const parsed = productInputSchema.omit({ projectId: true }).partial().extend({ id: z.string().min(1) }).safeParse(await request.json().catch(() => null));
@@ -43,3 +44,7 @@ export async function PATCH(request: Request) {
     products[index] = product; await store.setProducts(products); return Response.json({ product });
   } catch (error) { if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status }); return Response.json({ error: "تعذر تعديل المنتج." }, { status: 500 }); }
 }
+
+export const POST = withActivity("إضافة", handlePOST);
+
+export const PATCH = withActivity("تعديل", handlePATCH);

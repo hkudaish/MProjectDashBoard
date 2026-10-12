@@ -1,3 +1,4 @@
+import { withActivity } from "@/lib/activity-log";
 import { getSystemAdminSession, hasSameOrigin } from "@/lib/admin-auth";
 import { EntityValidationError, validateEntityIds } from "@/lib/entity-store";
 import { createProjectStore } from "@/lib/project-store";
@@ -7,7 +8,7 @@ export async function GET() {
   try { return Response.json({ projects: await createProjectStore().getProjects() }, { headers: { "Cache-Control": "no-store" } }); }
   catch { return Response.json({ error: "تعذر تحميل المشاريع." }, { status: 500 }); }
 }
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!hasSameOrigin(request) || !(await getSystemAdminSession(request.headers))) return Response.json({ error: "إنشاء المشاريع متاح لمسؤول النظام فقط." }, { status: 403 });
   const parsed = projectInputSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
     return Response.json({ project }, { status: 201 });
   } catch (error) { if (error instanceof EntityValidationError) return Response.json({ error: error.message }, { status: 400 }); return Response.json({ error: "تعذر حفظ المشروع." }, { status: 500 }); }
 }
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   if (!hasSameOrigin(request) || !(await getSystemAdminSession(request.headers))) return Response.json({ error: "تعديل المشاريع متاح لمسؤول النظام فقط." }, { status: 403 });
   const parsed = projectInputSchema.partial().extend({ id: z.string().min(1) }).safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
@@ -34,3 +35,7 @@ export async function PATCH(request: Request) {
     await store.setProjects(projects); return Response.json({ project });
   } catch (error) { if (error instanceof EntityValidationError) return Response.json({ error: error.message }, { status: 400 }); return Response.json({ error: "تعذر تعديل المشروع." }, { status: 500 }); }
 }
+
+export const POST = withActivity("إضافة", handlePOST);
+
+export const PATCH = withActivity("تعديل", handlePATCH);

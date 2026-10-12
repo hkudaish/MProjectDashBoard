@@ -38,6 +38,7 @@ await productsModule.link((specifier) => {
 });
 await productsModule.evaluate();
 const imports = {
+  "@/lib/activity-log": { withActivity: (_action, handler) => handler },
   "@/lib/types": { OWNER_LABELS: {} },
   "@/lib/task-assignment": { normalizeTaskAssignments: async (actor, task) => task, normalizeProductDetails: async (actor, details) => details, taskPermissions: () => ({ canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] }), TaskPolicyError: class extends Error {} },
   "@/lib/user-accounts": { listUsers: async () => [] },

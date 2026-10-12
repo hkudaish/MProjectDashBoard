@@ -1,10 +1,11 @@
+import { withActivity } from "@/lib/activity-log";
 import { z } from "zod";
 import { adminSessionCookie, createAdminSessionToken, getUserSession, hasSameOrigin } from "@/lib/admin-auth";
 import { changeUserPassword, passwordSchema, publicUser } from "@/lib/user-accounts";
 import { sessionInfo } from "@/lib/session-info";
 export const dynamic = "force-dynamic";
 const schema = z.object({ currentPassword: z.string().min(1).max(254), newPassword: passwordSchema });
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });
   const session = await getUserSession(request.headers);
   if (!session) return Response.json({ error: "سجّل الدخول أولًا." }, { status: 401 });
@@ -19,3 +20,5 @@ export async function POST(request: Request) {
     return Response.json({ error: error instanceof Error && messages.includes(error.message) ? error.message : "تعذر تغيير كلمة المرور." }, { status: 400 });
   }
 }
+
+export const POST = withActivity("تغيير كلمة المرور", handlePOST);

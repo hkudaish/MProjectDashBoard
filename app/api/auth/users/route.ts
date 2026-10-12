@@ -1,3 +1,4 @@
+import { withActivity } from "@/lib/activity-log";
 import { adminSessionCookie, createAdminSessionToken, getSystemAdminSession, hasSameOrigin } from "@/lib/admin-auth";
 import { createUser, createUserSchema, listUsers, updateUserSchema, HIERARCHY_ERRORS, ACCOUNT_ERRORS, deleteUser, emailSchema, findAccount, updateUser } from "@/lib/user-accounts";
 import { approvedRegistration, activateRegistration, RegistrationError } from "@/lib/registration-requests";
@@ -7,7 +8,7 @@ export async function GET(request: Request) {
   try { return Response.json({ users: await listUsers() }, { headers: { "Cache-Control": "no-store" } }); }
   catch { return Response.json({ error: "تعذر تحميل المستخدمين." }, { status: 503 }); }
 }
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });
   if (!(await getSystemAdminSession(request.headers))) return Response.json({ error: "إضافة الحسابات متاحة لمسؤول النظام بعد تغيير كلمة المرور." }, { status: 403 });
   const parsed = createUserSchema.safeParse(await request.json().catch(() => null));
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
   }
   catch (error) { return Response.json({ error: error instanceof RegistrationError || error instanceof Error && (error.message === "يوجد حساب بهذا البريد الإلكتروني بالفعل." || HIERARCHY_ERRORS.includes(error.message)) ? error.message : "تعذر إنشاء الحساب." }, { status: 400 }); }
 }
-export async function PATCH(request: Request) {
+async function handlePATCH(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });
   const session = await getSystemAdminSession(request.headers);
   if (!session) return Response.json({ error: "تعديل الحسابات متاح لمسؤول النظام بعد تغيير كلمة المرور." }, { status: 403 });
@@ -49,7 +50,7 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+async function handleDELETE(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });
   const session = await getSystemAdminSession(request.headers);
   if (!session) return Response.json({ error: "حذف الحسابات متاح لمدير النظام فقط." }, { status: 403 });
@@ -59,3 +60,9 @@ export async function DELETE(request: Request) {
   try { return Response.json(await deleteUser(parsed.data, session.email), { headers: { "Cache-Control": "no-store" } }); }
   catch (error) { const allowed = [...ACCOUNT_ERRORS, "الحساب غير موجود.", "يجب الإبقاء على مسؤول نظام نشط واحد على الأقل."]; return Response.json({ error: error instanceof Error && allowed.includes(error.message) ? error.message : "تعذر حذف الحساب." }, { status: 400 }); }
 }
+
+export const POST = withActivity("إضافة", handlePOST);
+
+export const PATCH = withActivity("تعديل", handlePATCH);
+
+export const DELETE = withActivity("حذف", handleDELETE);

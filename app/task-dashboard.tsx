@@ -1,4 +1,7 @@
 "use client";
+import { ChatPanel } from "@/components/chat-panel";
+import { ActivityDialog } from "@/components/activity-dialog";
+
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -226,6 +229,7 @@ export function TaskDashboard() {
   const [adminManagerOpen, setAdminManagerOpen] = useState(false);
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [registrationReviewOpen, setRegistrationReviewOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const [mailboxOpen, setMailboxOpen] = useState(false);
   const [approvedRequest, setApprovedRequest] = useState<RegistrationRequest | null>(null);
   const [userSession, setUserSession] = useState<SessionInfo | null>(null);
@@ -606,9 +610,9 @@ export function TaskDashboard() {
               <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">خطة التنفيذ للجزء الأول - ثلاثة أشهر</p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
             <DropdownMenu dir="rtl"><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-xl border-teal-100 bg-teal-50/50 text-teal-900"><Settings className="size-4" /><span>الإعدادات</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">
+              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">{userSession?.authenticated && !userSession.mustChangePassword && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setActivityOpen(true)}><ListChecks className="size-4" />سجل العمليات</DropdownMenuItem>}
                 <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => setRegistrationOpen(true)}><UserPlus className="size-4" />طلب تسجيل</DropdownMenuItem>
                 {userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setRegistrationReviewOpen(true)}><ListChecks className="size-4" />طلبات التسجيل{registrationCount > 0 && <span className="ms-auto rounded-full bg-amber-100 px-2 text-xs font-bold text-amber-800">{registrationCount}</span>}</DropdownMenuItem>}
                 <DropdownMenuSeparator />
@@ -781,7 +785,7 @@ export function TaskDashboard() {
       <RegistrationRequestDialog open={registrationOpen} onOpenChange={setRegistrationOpen} />
       <MailboxDialog open={mailboxOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setMailboxOpen} />
       <RegistrationReviewDialog open={registrationReviewOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setRegistrationReviewOpen} onApproved={request => { setApprovedRequest(request); setAdminManagerOpen(true); }} />
-      <UserAccountManager projectId={activeProjectId} initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
+      <ActivityDialog key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} open={activityOpen && Boolean(userSession?.authenticated && !userSession.mustChangePassword)} onOpenChange={setActivityOpen} administrator={Boolean(userSession?.canManageUsers)} /><UserAccountManager projectId={activeProjectId} initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
       <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 

@@ -1,8 +1,9 @@
+import { withActivity } from "@/lib/activity-log";
 import { clearedAdminSessionCookie, hasSameOrigin } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!hasSameOrigin(request)) {
     return Response.json({ error: "طلب تسجيل الخروج غير صالح." }, { status: 403 });
   }
@@ -16,3 +17,4 @@ export async function POST(request: Request) {
     },
   );
 }
+export const POST = withActivity("تسجيل الخروج", handlePOST);

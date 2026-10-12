@@ -1,9 +1,10 @@
+import { withActivity } from "@/lib/activity-log";
 import { z } from "zod";
 import { adminSessionCookie, canAdminLogin, createAdminSessionToken, hasSameOrigin } from "@/lib/admin-auth";
 import { authenticateUser, publicUser } from "@/lib/user-accounts";
 import { sessionInfo } from "@/lib/session-info";
 export const dynamic = "force-dynamic";
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "طلب تسجيل الدخول غير صالح." }, { status: 403 });
   if (!canAdminLogin()) return Response.json({ error: "لم يتم إعداد الدخول بعد." }, { status: 503 });
   const parsed = z.object({ email: z.string().max(254), password: z.string().max(254) }).safeParse(await request.json().catch(() => null));
@@ -18,3 +19,5 @@ export async function POST(request: Request) {
     });
   } catch { return Response.json({ error: "تعذر تسجيل الدخول. حاول مرة أخرى." }, { status: 503 }); }
 }
+
+export const POST = withActivity("تسجيل الدخول", handlePOST);
