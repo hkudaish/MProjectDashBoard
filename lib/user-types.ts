@@ -24,6 +24,7 @@ export const MANAGER_POSITIONS: Record<Position, Position[]> = {
 };
 export type Entity = { id: string; name: string; description: string; hidden: boolean; deleted?: boolean };
 export type PublicUser = {
+  canMessageLeadership?: boolean;
   projectId?: string | null;
   email: string; loginEmail: string; name: string; role: UserRole; active: boolean;
   position: Position | null; managerEmail: string | null; additionalManagerEmail: string | null; entityId: string | null;

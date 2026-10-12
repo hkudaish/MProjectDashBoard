@@ -190,6 +190,36 @@ test("system administrator appears first, broadcasts privately to active users, 
   assert.ok((await(await chatGet(b,"?peer=admin@example.com")).json()).messages[0].recalledAt);
   assert.ok(data.get("activity-log-v1").value.some(e=>e.action==="إرسال رسالة جماعية"));
 });
+test("selected-recipient broadcasts reach only the selected active users and reject invalid recipient lists atomically", async () => {
+  const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob");
+  const sent=await chatRoute.POST(request({recipients:["alice@example.com","bob@example.com"],text:"Selected audience"},admin));assert.equal(sent.status,201);assert.equal((await sent.json()).message.broadcastCount,2);
+  assert.equal(data.get("chat-messages-v1").value.length,2);assert.ok(data.get("chat-messages-v1").value.every(m=>["alice@example.com","bob@example.com"].includes(m.recipient)));
+  const before=structuredClone(data.get("chat-messages-v1").value);
+  for(const recipients of [[],["alice@example.com","alice@example.com"],["alice@example.com","missing@example.com"],["alice@example.com","admin@example.com"]]) assert.equal((await chatRoute.POST(request({recipients,text:"Invalid audience"},admin))).status,400);
+  assert.equal((await chatRoute.POST(request({recipient:"all",recipients:["alice@example.com"],text:"Ambiguous"},admin))).status,400);
+  assert.equal((await chatRoute.POST(request({recipients:["bob@example.com"],text:"Unauthorized"},a))).status,403);
+  assert.deepEqual(data.get("chat-messages-v1").value,before);
+  assert.equal((await(await chatGet(b)).json()).unread,1);
+  assert.equal((await(await chatGet(a,"?peer=bob@example.com")).json()).messages.length,0);
+});
+test("leadership messaging requires explicit administrator approval, including replies and edits, and revocation invalidates sessions", async () => {
+  const admin=await adminCookie();let employee=await chatUser(admin,"alice@example.com","Alice");
+  for(const [email,position] of [["secretary@example.com","secretary_general"],["assistant@example.com","assistant_secretary_general"],["executive@example.com","executive_assistant"]]) await positioned(admin,email,position,null);
+  const account=await accounts.findAccount("alice@example.com");assert.equal(account.canMessageLeadership,false);
+  const overview=await(await chatGet(employee)).json();assert.ok(overview.contacts.filter(u=>["secretary_general","assistant_secretary_general","executive_assistant"].includes(u.position)).every(u=>u.canMessage===false));
+  for(const recipient of ["secretary@example.com","assistant@example.com","executive@example.com"]) assert.equal((await chatRoute.POST(request({recipient,text:"Not approved"},employee))).status,403);
+  assert.equal((await users.PATCH(request({email:"alice@example.com",canMessageLeadership:true},employee,"PATCH"))).status,403);
+  assert.equal((await users.PATCH(request({email:"alice@example.com",canMessageLeadership:true},admin,"PATCH"))).status,200);
+  assert.equal((await chatGet(employee)).status,403);employee=cookie(await signIn("alice@example.com",personalPassword));
+  const sent=await chatRoute.POST(request({recipient:"secretary@example.com",text:"Approved message"},employee));assert.equal(sent.status,201);const message=(await sent.json()).message;
+  assert.equal((await accounts.findAccount("alice@example.com")).passwordHash,account.passwordHash);
+  assert.equal((await users.PATCH(request({email:"alice@example.com",canMessageLeadership:false},admin,"PATCH"))).status,200);
+  assert.equal((await chatGet(employee)).status,403);employee=cookie(await signIn("alice@example.com",personalPassword));
+  assert.equal((await chatRoute.POST(request({recipient:"secretary@example.com",text:"Reply after revocation"},employee))).status,403);
+  assert.equal((await chatRoute.PATCH(request({id:message.id,action:"edit",text:"Changed after revocation"},employee,"PATCH"))).status,403);
+  assert.equal((await chatRoute.PATCH(request({id:message.id,action:"recall"},employee,"PATCH"))).status,200);
+  assert.equal((await chatRoute.POST(request({recipient:"secretary@example.com",text:"Administrator message"},admin))).status,201);
+});
 test("chat is private to participants, counts unread messages, and requires a changed-password session", async () => {
   const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob"), c=await chatUser(admin,"carol@example.com","Carol");
   assert.equal((await chatGet("")).status,403);
