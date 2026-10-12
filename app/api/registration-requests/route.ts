@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   const parsed = registrationInputSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "أكمل الحقول المطلوبة وأدخل بريدًا إلكترونيًا صالحًا." }, { status: 400 });
   try { await submitRegistration(parsed.data); return Response.json({ message: "شكرًا لك! تم استلام طلبك لمراجعته من مدير النظام. سيتم إشعارك عبر البريد الإلكتروني بنتيجة المراجعة." }, { status: 201 }); }
-  catch { return Response.json({ error: "تعذر حفظ الطلب. حاول مرة أخرى." }, { status: 503 }); }
+  catch (error) { return Response.json({ error: error instanceof RegistrationError ? error.message : "تعذر حفظ الطلب. حاول مرة أخرى." }, { status: error instanceof RegistrationError ? 400 : 503 }); }
 }
 export async function PATCH(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });

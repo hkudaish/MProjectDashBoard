@@ -1,11 +1,11 @@
 "use client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { POSITIONS, MANAGER_POSITIONS, type Position, type PublicUser } from "@/lib/user-types";
+import { POSITIONS, MANAGER_POSITIONS, type Entity, type Position, type PublicUser } from "@/lib/user-types";
 import { HierarchyPath } from "@/components/hierarchy-path";
 import { managerOptions, supervisorChain } from "@/lib/hierarchy";
 export type ManagerPosition = Position;
 export type HierarchyDraft = { position: Position; managerEmail: string | null; additionalManagerEmail: string | null; managerPosition?: ManagerPosition; entityId: string | null };
-export function UserHierarchyFields({ value, onChange, users, disabled, email = "", lockPosition = false }: { value: HierarchyDraft; onChange: (value: HierarchyDraft) => void; users: PublicUser[]; disabled: boolean; email?: string; lockPosition?: boolean }) {
+export function UserHierarchyFields({ value, onChange, users, entities, disabled, email = "", lockPosition = false }: { value: HierarchyDraft; onChange: (value: HierarchyDraft) => void; users: PublicUser[]; entities: Entity[]; disabled: boolean; email?: string; lockPosition?: boolean }) {
   const allowedPositions = MANAGER_POSITIONS[value.position];
   const selectedManager = users.find((user) => user.email === value.managerEmail);
   const availableManagers = managerOptions(users, value.position, email);
@@ -13,6 +13,12 @@ export function UserHierarchyFields({ value, onChange, users, disabled, email = 
   const managers = availableManagers.filter((user) => user.position === selectedPosition);
   const valid = Boolean(selectedManager?.active && selectedManager.email !== email && selectedManager.position === selectedPosition && !value.additionalManagerEmail);
   return <>
+    {value.position !== "system_admin" && <label className="grid gap-2 text-sm font-bold">اسم الجهة
+      <select required aria-label="اسم الجهة" value={value.entityId ?? ""} disabled={disabled} onChange={event => onChange({ ...value, entityId: event.target.value || null })} className="h-10 w-full rounded-xl border border-input bg-transparent px-3 text-sm font-normal shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <option value="" disabled>اختر الجهة التي يعمل لها المستخدم</option>
+        {entities.filter(entity => !entity.deleted && (!entity.hidden || entity.id === value.entityId)).map(entity => <option key={entity.id} value={entity.id}>{entity.name}{entity.hidden ? " (محجوبة)" : ""}</option>)}
+      </select>
+    </label>}
     <label className="grid gap-2 text-sm font-bold">المنصب الوظيفي
       <Select dir="rtl" value={value.position} disabled={disabled || lockPosition} onValueChange={(position) => onChange({ ...value, position: position as Position, managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: position === "system_admin" ? null : value.entityId })}>
         <SelectTrigger className="w-full rounded-xl text-right"><SelectValue /></SelectTrigger>

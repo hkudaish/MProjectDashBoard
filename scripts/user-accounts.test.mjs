@@ -120,7 +120,7 @@ beforeEach(() => {
 
 test("registration is public, validated and deduplicated, and review data stays private", async () => {
   const admin=await adminCookie();
-  const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",email:"applicant@example.com"};
+  const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",entityId:"wamy",email:"applicant@example.com"};
   assert.equal((await registrationRoute.POST(request({...input,email:"invalid"}))).status,400);
   assert.equal((await registrationRoute.POST(request(input,"","POST","https://foreign.example"))).status,403);
   for(const response of await Promise.all([registrationRoute.POST(request(input)),registrationRoute.POST(request(input))])) assert.equal(response.status,201);
@@ -128,9 +128,24 @@ test("registration is public, validated and deduplicated, and review data stays 
   const body=await(await registrationRoute.GET(request(null,admin,"GET"))).json();
   assert.equal(body.requests.length,1);assert.equal(body.mailConfigured,false);
   assert.equal(body.requests[0].status,"pending");
+  assert.equal(body.requests[0].entityId,"wamy");
+  assert.equal(body.requests[0].entityName,"الندوة العالمية");
+  assert.ok(body.requests[0].notifications[0].text.includes("اسم الجهة: الندوة العالمية"));
   assert.ok(body.requests[0].notifications.every(item=>item.status==="queued"));
   assert.equal(await accounts.findAccount(input.email),null);
   assert.equal((await registrationRoute.PATCH(request({id:body.requests[0].id,status:"approved"}))).status,403);
+});
+test("registration requires an available entity and preserves the applicant's department separately", async () => {
+  await adminCookie();
+  const input={name:"Applicant",jobTitle:"موظف",department:"Media department",email:"applicant@example.com",entityId:"wamy"};
+  const {entityId,...missing}=input;
+  assert.equal((await registrationRoute.POST(request(missing))).status,400);
+  await store.setJSON("entities",[{id:"hidden",name:"Hidden",hidden:true},{id:"deleted",name:"Deleted",hidden:false,deleted:true}]);
+  for(const id of ["", "unknown", "hidden", "deleted"]) assert.equal((await registrationRoute.POST(request({...input,entityId:id}))).status,400);
+  assert.equal(data.get("registration-requests-v1"),undefined);
+  assert.equal((await registrationRoute.POST(request(input))).status,201);
+  const row=(await registrationService.listRegistrations())[0];
+  assert.equal(row.entityId,entityId);assert.equal(row.entityName,"الندوة العالمية");assert.equal(row.department,"Media department");
 });
 test("mail setup identifies the restricted Resend test sender", async () => {
   assert.equal(await registrationService.registrationMailMode(),"unconfigured");
@@ -142,7 +157,7 @@ test("mail setup identifies the restricted Resend test sender", async () => {
   assert.equal(await registrationService.registrationMailMode(),"live");
 });
 test("approved registration provisions once, sends separate approval and activation messages, and forces password change", async () => {
-  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",email:"applicant@example.com"};
+  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",entityId:"wamy",email:"applicant@example.com"};
   const sent=[];globalThis.fetch=async(url,options)=>{assert.equal(url,"https://api.resend.com/emails");sent.push({body:JSON.parse(options.body),key:options.headers["Idempotency-Key"]});return new Response(JSON.stringify({id:"sent"}),{status:200});};
   process.env.RESEND_API_KEY="test-key";process.env.REGISTRATION_MAIL_FROM="noreply@example.com";
   assert.equal((await registrationRoute.POST(request(input))).status,201);
@@ -164,7 +179,7 @@ test("approved registration provisions once, sends separate approval and activat
   assert.equal(new Set(sent.map(item=>item.key)).size,sent.length);
 });
 test("registration hold and rejection notify the applicant, and failed delivery can be retried", async () => {
-  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"موظف",department:"الإدارة",email:"applicant@example.com"};
+  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"موظف",department:"الإدارة",entityId:"wamy",email:"applicant@example.com"};
   await registrationRoute.POST(request(input));const row=(await registrationService.listRegistrations())[0];
   for(const status of ["on_hold","rejected"]){assert.equal((await registrationRoute.PATCH(request({id:row.id,status,note:"Review note"},admin,"PATCH"))).status,200);}
   const reviewed=(await registrationService.listRegistrations())[0];
@@ -182,7 +197,7 @@ test("registration hold and rejection notify the applicant, and failed delivery 
   assert.equal((await users.POST(request({name:input.name,email:input.email,position:"employee",password:temporaryPassword,registrationRequestId:row.id},admin))).status,400);
 });
 test("registration activation recovers after account creation is interrupted", async () => {
-  await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الإدارة",email:"applicant@example.com"};
+  await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الإدارة",entityId:"wamy",email:"applicant@example.com"};
   await registrationService.submitRegistration(input);const row=(await registrationService.listRegistrations())[0];
   await registrationService.reviewRegistration({id:row.id,status:"approved",note:""},"admin@example.com");
   await accounts.createUser({name:input.name,email:input.email,position:"project_manager",managerEmail:null,additionalManagerEmail:null,entityId:null,password:temporaryPassword,registrationRequestId:row.id});
@@ -196,7 +211,7 @@ test("Gmail notifications use HTTPS and MIME from the configured Google account"
   process.env.GMAIL_APP_PASSWORD="unused-app-password";
   assert.equal(await registrationService.registrationMailConfigured(),false);
   configureGmail();assert.equal(await registrationService.registrationMailMode(),"live");
-  await registrationService.submitRegistration({name:"Applicant",jobTitle:"موظف",department:"الإدارة",email:"applicant@example.com"});
+  await registrationService.submitRegistration({name:"Applicant",jobTitle:"موظف",department:"الإدارة",entityId:"wamy",email:"applicant@example.com"});
   assert.ok(gmailSent.length>0);assert.equal(gmailSent[0].parsed.from.value[0].address,"hkudaish@gmail.com");assert.equal(gmailSent[0].parsed.replyTo.value[0].address,"hkudaish@gmail.com");
   assert.ok(gmailSent[0].parsed.subject.startsWith("[MProjDashboard]"));assert.equal(gmailSent[0].parsed.headers.get("x-mprojdashboard"),"application-mail");
 });

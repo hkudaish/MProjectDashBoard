@@ -31,7 +31,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
     if (!open || !initialRegistration) return;
     const timer = setTimeout(() => {
       const position = (Object.entries(POSITIONS).find(([, label]) => label === initialRegistration.jobTitle)?.[0] ?? "employee") as Position;
-      setDraft({ name: initialRegistration.name, email: initialRegistration.email, password: "", confirmation: "", position, managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: null });
+      setDraft({ name: initialRegistration.name, email: initialRegistration.email, password: "", confirmation: "", position, managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: initialRegistration.entityId ?? null });
       setRegistrationRequestId(initialRegistration.id);
     }, 0);
     return () => clearTimeout(timer);
@@ -47,7 +47,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
       const entityData = await entityResponse.json() as { entities: Entity[]; error?: string };
       if (!entityResponse.ok) throw new Error(entityData.error || "تعذر تحميل الجهات.");
       setEntities(entityData.entities);
-      if (initialRegistration) setDraft(current => ({ ...current, entityId: current.entityId ?? entityData.entities.find(entity => entity.name === initialRegistration.department)?.id ?? null }));
+      if (initialRegistration) setDraft(current => ({ ...current, entityId: current.entityId ?? initialRegistration.entityId ?? entityData.entities.find(entity => entity.name === initialRegistration.department)?.id ?? null }));
     } catch (error) { setError(error instanceof Error ? error.message : "تعذر تحميل الحسابات."); }
     finally { setLoading(false); }
   }, [initialRegistration]);
@@ -88,7 +88,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
       </Table>}
       {editingUser && <form className="grid gap-4 rounded-2xl border border-sky-200 bg-sky-50/40 p-4" onSubmit={(event) => { event.preventDefault(); void mutate("PATCH", { email: editingUser.email, newEmail: editingUser.loginEmail, name: editingUser.name, position: editingUser.position, managerEmail: editingUser.managerEmail, additionalManagerEmail: null, managerPosition: editingUser.managerPosition, entityId: editingUser.entityId }).then((ok) => { if (ok) { setEditingUser(null); toast.success("تم تحديث بيانات المستخدم."); } }); }}>
         <h3 className="font-black text-sky-900">تعديل المستخدم: {editingUser.loginEmail}</h3>
-        <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">اسم المستخدم<Input required maxLength={120} value={editingUser.name} onChange={(event) => setEditingUser({ ...editingUser, name: event.target.value })} /></label><label className="grid gap-2 text-sm font-bold">بريد تسجيل الدخول<Input type="email" dir="ltr" required maxLength={254} value={editingUser.loginEmail} onChange={(event) => setEditingUser({ ...editingUser, loginEmail: event.target.value })} /></label><UserHierarchyFields value={editingUser} onChange={(links) => setEditingUser({ ...editingUser, ...links })} users={users} disabled={saving} email={editingUser.email} lockPosition={editingUser.email === currentEmail} /></fieldset>
+        <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm font-bold">اسم المستخدم<Input required maxLength={120} value={editingUser.name} onChange={(event) => setEditingUser({ ...editingUser, name: event.target.value })} /></label><label className="grid gap-2 text-sm font-bold">بريد تسجيل الدخول<Input type="email" dir="ltr" required maxLength={254} value={editingUser.loginEmail} onChange={(event) => setEditingUser({ ...editingUser, loginEmail: event.target.value })} /></label><UserHierarchyFields value={editingUser} onChange={(links) => setEditingUser({ ...editingUser, ...links })} users={users} entities={entities} disabled={saving} email={editingUser.email} lockPosition={editingUser.email === currentEmail} /></fieldset>
         <div className="flex gap-2"><Button type="submit" disabled={saving}>حفظ البيانات</Button><Button type="button" variant="outline" disabled={saving} onClick={() => setEditingUser(null)}>إلغاء</Button></div>
       </form>}
       {resetEmail && <form className="grid gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" onSubmit={(event) => { event.preventDefault(); if (temporaryPassword !== confirmation) { setError("كلمتا المرور غير متطابقتين."); return; } void mutate("PATCH", { email: resetEmail, temporaryPassword }).then((ok) => { if (ok) { setResetEmail(""); setTemporaryPassword(""); setConfirmation(""); toast.success("تم تعيين كلمة مرور مؤقتة وإلغاء الجلسات السابقة. سلّمها لصاحب الحساب."); } }); }}>
@@ -106,7 +106,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
           <label className="grid gap-2 text-sm font-bold">البريد الإلكتروني<Input type="email" dir="ltr" autoComplete="off" readOnly={Boolean(registrationRequestId)} required maxLength={254} value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></label>
           <label className="grid gap-2 text-sm font-bold">كلمة المرور المؤقتة<Input type="password" autoComplete="new-password" minLength={10} maxLength={128} required value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} /></label>
           <label className="grid gap-2 text-sm font-bold">تأكيد كلمة المرور<Input type="password" autoComplete="new-password" minLength={10} maxLength={128} required value={draft.confirmation} onChange={(e) => setDraft({ ...draft, confirmation: e.target.value })} /></label>
-          <UserHierarchyFields value={draft} onChange={(links) => setDraft({ ...draft, ...links })} users={users} disabled={saving} />
+          <UserHierarchyFields value={draft} onChange={(links) => setDraft({ ...draft, ...links })} users={users} entities={entities} disabled={saving} />
         </fieldset>
         <p className="text-xs leading-6 text-slate-600">اختر المنصب. التبعية الإدارية اختيارية؛ يمكنك اختيار المسؤول من الحسابات المسجلة أو ربطه لاحقًا. الأمين العام أعلى الهيكل، ومدير النظام خارجه. كلمة المرور لا تقل عن 10 أحرف.</p>
         <DialogFooter><Button type="submit" disabled={saving || loading}>{saving ? <Loader2 className="animate-spin" /> : <UserPlus />}إنشاء الحساب</Button><Button type="button" variant="outline" disabled={saving} onClick={close}>إغلاق</Button></DialogFooter>
