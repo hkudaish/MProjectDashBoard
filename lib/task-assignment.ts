@@ -1,3 +1,4 @@
+import { permitted } from "./permissions";
 import { listUsers } from "./user-accounts";
 import { createEntityStore } from "./entity-store";
 import { isManager, subordinateUsers, taskAssignableUsers } from "./hierarchy";
@@ -5,21 +6,21 @@ import type { PublicUser, UserSession } from "./user-types";
 import type { Task, TaskDetail, TaskPermissions } from "./types";
 export class TaskPolicyError extends Error { constructor(message: string, public status = 403) { super(message); } }
 export function taskPermissions(actor: PublicUser, task: Task, users: PublicUser[]): TaskPermissions {
-  if (actor.position === "system_admin") return { canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: (task.details ?? []).map((detail) => detail.id) };
+  if (actor.position === "system_admin") return { canDelete: true, canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: (task.details ?? []).map((detail) => detail.id) };
   const managerial = isManager(actor.position);
   const descendants = new Set(subordinateUsers(users, actor.email).filter((user) => user.active).map((user) => user.email));
   const owns = (email?: string) => Boolean(email && (email === actor.email || managerial && descendants.has(email)));
-  const canEditMain = managerial && (owns(task.assigneeEmail) || !task.assigneeEmail && task.createdByEmail === actor.email);
-  const canUpdateMain = canEditMain || task.assigneeEmail === actor.email;
+  const scopeMain = owns(task.assigneeEmail) || !task.assigneeEmail && task.createdByEmail === actor.email;
+  const canEditMain = permitted(actor, "tasks", "edit") && scopeMain;
+  const canUpdateMain = permitted(actor, "tasks", "update") && scopeMain;
   const editableDetailIds = (task.details ?? []).filter((detail) => owns(detail.assigneeEmail) || canEditMain && !detail.assigneeEmail).map((detail) => detail.id);
-  return { canEdit: canUpdateMain || editableDetailIds.length > 0, canEditMain, canUpdateMain, canAssign: managerial && (canEditMain || editableDetailIds.length > 0), editableDetailIds };
+  return { canDelete: permitted(actor, "tasks", "delete") && scopeMain, canEdit: canEditMain || canUpdateMain || editableDetailIds.length > 0 && (permitted(actor, "tasks", "edit") || permitted(actor, "tasks", "update")), canEditMain, canUpdateMain, canAssign: managerial && permitted(actor, "tasks", "edit") && (canEditMain || editableDetailIds.length > 0), editableDetailIds };
 }
 function detailFields(detail: TaskDetail) { return { id: detail.id, description: detail.description, status: detail.status, completionDate: detail.completionDate, ownerType: detail.ownerType, assigneeEmail: detail.assigneeEmail ?? "", ...(!detail.assigneeEmail ? { assignee: detail.assignee } : {}) }; }
 export async function normalizeTaskAssignments(actor: UserSession, next: Task, previous?: Task): Promise<Task> {
   const users = await listUsers();
   const systemAdmin = actor.position === "system_admin";
-  const managerial = isManager(actor.position);
-  if (!previous && !managerial && !systemAdmin) throw new TaskPolicyError("إنشاء المهام متاح للمسؤولين فقط.");
+  if (!previous && !permitted(actor, "tasks", "create")) throw new TaskPolicyError("إنشاء المهام متاح للمسؤولين فقط.");
   const permissions = previous ? taskPermissions(actor, previous, users) : { canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] };
   if (!permissions.canEdit) throw new TaskPolicyError("لا تملك صلاحية تعديل هذه المهمة.");
   if (previous && !permissions.canEditMain) {
@@ -55,7 +56,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
     if (previous && !systemAdmin) {
       if (!old && !permissions.canEditMain) throw new TaskPolicyError("لا تملك صلاحية إضافة صفوف إلى هذه المهمة.");
       if (old && !permissions.editableDetailIds.includes(old.id) && JSON.stringify(detailFields(detail)) !== JSON.stringify(detailFields(old))) throw new TaskPolicyError("لا يمكنك تعديل صف مسند خارج نطاقك الإداري.");
-      if (old && !managerial) for (const key of ["description", "ownerType", "assignee", "assigneeEmail"] as const) {
+      if (old && !permitted(actor, "tasks", "edit")) for (const key of ["description", "ownerType", "assignee", "assigneeEmail"] as const) {
         if (key === "assignee" && detail.assigneeEmail === old.assigneeEmail && detail.assigneeEmail) continue;
         if ((detail[key] ?? "") !== (old[key] ?? "")) throw new TaskPolicyError("الموظف يستطيع تحديث حالة صفه وتاريخ إنجازه فقط.");
       }
@@ -67,6 +68,18 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
   return { ...next, ...assignment(next, previous), ...(next.details !== undefined ? { details } : {}) };
 }
 export async function normalizeProductDetails(actor: UserSession, details: TaskDetail[], previous?: TaskDetail[]) {
-  const task: Task = { id: "product-details", productId: "", productName: "", title: "", plannedDate: "", endDate: "", status: "not_started", progress: 0, ownerType: "unassigned", assignee: "", notes: "", sourceOrder: 0, updatedAt: "", createdByEmail: actor.email, details };
-  return (await normalizeTaskAssignments(actor, task, previous ? { ...task, details: previous } : undefined)).details ?? [];
+  const [users, entities] = await Promise.all([listUsers(), createEntityStore().getEntities()]);
+  const assignable = new Set(taskAssignableUsers(users, actor).map(user => user.email));
+  return details.map(detail => {
+    const old = previous?.find(row => row.id === detail.id);
+    if (detail.ownerType !== old?.ownerType && !["joint", "unassigned"].includes(detail.ownerType) && !entities.some(entity => entity.id === detail.ownerType && !entity.hidden && !entity.deleted)) throw new TaskPolicyError("الجهة المحددة غير متاحة للاختيار.", 400);
+    const email = detail.assigneeEmail?.trim().toLowerCase();
+    if (email) {
+      const target = users.find(user => user.email === email);
+      if (email !== old?.assigneeEmail && (!target?.active || target.position === "system_admin" || !assignable.has(email))) throw new TaskPolicyError("يمكن إسناد الصف إلى المستخدمين التابعين لك إداريًا فقط.");
+      return { ...detail, assigneeEmail: email, assignee: target?.name ?? old?.assignee ?? detail.assignee };
+    }
+    if (detail.assignee && (!old || old.assigneeEmail || detail.assignee !== old.assignee)) throw new TaskPolicyError("اختر المستخدم من قائمة التابعين بدل كتابة اسم حر.", 400);
+    return detail;
+  });
 }

@@ -15,6 +15,9 @@ let writes = 0;
 const seed = { id: "existing", productId: "digital", productName: "المحتوى الرقمي", title: "المهمة الحالية", plannedDate: "2026-10-01", endDate: "2026-10-08", status: "completed", progress: 100, ownerType: "wamy", assignee: "", notes: "", sourceOrder: 1, updatedAt: "2026-10-01" };
 const stubs = {
   "@/lib/activity-log": { withActivity: (_action, handler) => handler },
+  "@/lib/resource-access": { withResourceAccess: (_resource, _action, handler) => async request => admin && role === "admin" ? handler(request) : Response.json({}, { status: 403 }) },
+  "@/lib/resource-deletion": { deleteResource: async () => Response.json({}) },
+  "@/lib/permissions": { permitted: actor => Boolean(actor), requireChanges: () => {}, PermissionError: class extends Error {} },
   "./local-store": { getLocalStore: () => null },
   "@/lib/task-assignment": { normalizeTaskAssignments: async (actor, task) => task, normalizeProductDetails: async (actor, details) => details, taskPermissions: () => ({ canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] }), TaskPolicyError: class extends Error {} },
   "@/lib/user-accounts": { listUsers: async () => [] },

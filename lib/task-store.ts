@@ -9,6 +9,7 @@ const STORE_NAME = "wamy-task-dashboard";
 
 export type TaskStore = {
   getTasks: () => Promise<Task[]>;
+  hasStoredTasks?: () => Promise<boolean>;
   setTasks: (tasks: Task[]) => Promise<void>;
 };
 
@@ -63,6 +64,7 @@ const map = new Map<string, string>();
 function createFallbackStore(): TaskStore {
 
   return {
+    async hasStoredTasks() { return map.has(TASKS_KEY); },
     async getTasks() {
       const raw = map.get(TASKS_KEY);
       if (!raw) return [];
@@ -88,6 +90,7 @@ export function createTaskStore(): TaskStore {
 
   const store = local ?? getStore(STORE_NAME, { consistency: "strong" });
   return {
+    async hasStoredTasks() { return Array.isArray(await store.get(TASKS_KEY, { type: "json" })); },
     async getTasks() {
       const tasks = await store.get(TASKS_KEY, { type: "json" }) as unknown;
       if (!Array.isArray(tasks)) return [];

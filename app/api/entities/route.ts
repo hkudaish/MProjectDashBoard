@@ -34,7 +34,7 @@ async function handleDELETE(request: Request) {
     const store = createEntityStore(); const entities = await store.getEntities(); const index = entities.findIndex((entity) => entity.id === parsed.data.id && !entity.deleted);
     if (index < 0) return Response.json({ error: "الجهة غير موجودة." }, { status: 404 });
     const [users, storedTasks, projects, products] = await Promise.all([listUsers(), createTaskStore().getTasks(), createProjectStore().getProjects(), createProductStore().getProducts()]);
-    const tasks = storedTasks.length ? storedTasks : DEFAULT_TASKS as Task[];
+    const tasks = storedTasks.length || await createTaskStore().hasStoredTasks?.() ? storedTasks : DEFAULT_TASKS as Task[];
     const id = parsed.data.id;
     if (users.some((user) => user.entityId === id) || tasks.some((task) => task.ownerType === id || task.details?.some((detail) => detail.ownerType === id)) || projects.some((project) => project.entityIds?.includes(id)) || products.some((product) => product.details?.some((detail) => detail.ownerType === id))) return Response.json({ error: "الجهة مرتبطة ببيانات قائمة. استخدم الحجب، أو عدّل ارتباطاتها قبل حذفها." }, { status: 409 });
     entities[index] = { ...entities[index], hidden: true, deleted: true }; await store.setEntities(entities); return Response.json({ deleted: true });

@@ -10,14 +10,17 @@ export function createProjectStore() {
       const raw = store ? await store.get("projects", { type: "json" }) : [...memory.values()];
       const projects = new Map<string, Project>([[DEFAULT_PROJECT.id, DEFAULT_PROJECT]]);
       if (Array.isArray(raw)) for (const item of raw) {
+        if (typeof item.id === "string" && item.deleted === true) { projects.delete(item.id); continue; }
         const parsed = projectInputSchema.safeParse(item);
         if (parsed.success && typeof item.id === "string" && item.id) projects.set(item.id, { id: item.id, ...parsed.data });
       }
       return [...projects.values()];
     },
     async setProjects(projects: Project[]) {
-      if (store) await store.setJSON("projects", projects);
-      else { memory.clear(); for (const project of projects) memory.set(project.id, project); }
+      const previous = store ? await store.get("projects", { type: "json" }) : [...memory.values()];
+      const tombstones = Array.isArray(previous) ? previous.filter(item => item.deleted === true && !projects.some(value => value.id === item.id)) : [];
+      const next = [...tombstones, ...projects];
+      if (store) await store.setJSON("projects", next); else { memory.clear(); for (const item of next) memory.set(item.id, item); }
     },
   };
 }

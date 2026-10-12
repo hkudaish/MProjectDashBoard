@@ -12,6 +12,7 @@ export type TaskDetail = {
 };
 
 export type Task = {
+  projectId?: string;
   id: string;
   productId: string;
   productName: string;
@@ -47,8 +48,8 @@ export const OWNER_LABELS: Record<string, string> = {
   unassigned: "غير محدد",
 };
 
-export type Product = { id: string; projectId?: string; name: string; target: string; description: string; details?: TaskDetail[] };
+export type Product = { deleted?: boolean; id: string; projectId?: string; name: string; target: string; description: string; details?: TaskDetail[] };
 
-export type Project = { id: string; name: string; description: string; entityIds?: string[] };
+export type Project = { deleted?: boolean; id: string; name: string; description: string; entityIds?: string[] };
 
-export type TaskPermissions = { canEdit: boolean; canEditMain: boolean; canUpdateMain: boolean; canAssign: boolean; editableDetailIds: string[] };
+export type TaskPermissions = { canDelete?: boolean; canEdit: boolean; canEditMain: boolean; canUpdateMain: boolean; canAssign: boolean; editableDetailIds: string[] };

@@ -1,3 +1,6 @@
+import { deleteResource } from "@/lib/resource-deletion";
+import { withResourceAccess } from "@/lib/resource-access";
+import { permitted, requireChanges, PermissionError } from "@/lib/permissions";
 import { withActivity } from "@/lib/activity-log";
 import { listUsers } from "@/lib/user-accounts";
 import { createEntityStore } from "@/lib/entity-store";
@@ -7,7 +10,7 @@ import { taskInputSchema, taskTitleSchema } from "@/lib/products";
 import { createProductStore } from "@/lib/product-store";
 import { DEFAULT_TASKS } from "@/lib/task-data";
 import { createTaskStore } from "@/lib/task-store";
-import { getAdminSession, getUserSession } from "@/lib/admin-auth";
+import { getUserSession } from "@/lib/admin-auth";
 import type { Task } from "@/lib/types";
 import { taskDetailsSchema } from "@/lib/task-details";
 import { progressForStatus } from "@/lib/task-progress";
@@ -22,7 +25,7 @@ function seedTasks(): Task[] {
 async function readTasks() {
   const store = createTaskStore();
   const existing = await store.getTasks();
-  if (existing.length > 0) return { store, tasks: existing };
+  if (existing.length > 0 || await store.hasStoredTasks?.()) return { store, tasks: existing };
 
   const tasks = seedTasks();
   await store.setTasks(tasks);
@@ -31,17 +34,19 @@ async function readTasks() {
 
 export async function GET(request?: Request) {
   try {
+    const actor = await getUserSession(request?.headers ?? new Headers());
+    if (!permitted(actor, "tasks", "view")) return Response.json({ tasks: [] }, { headers: { "Cache-Control": "no-store" } });
     const { tasks } = await readTasks();
     const products = await createProductStore().getProducts();
     const productNames = new Map(products.map((p) => [p.id, p.name]));
-    const session = request ? await getUserSession(request.headers) : null;
+    const session = actor;
     const activeSession = session && !session.mustChangePassword ? session : null;
     const users = activeSession || tasks.some((task) => task.assigneeEmail || task.details?.some((detail) => detail.assigneeEmail)) ? await listUsers() : [];
     const entities = await createEntityStore().getEntities();
     const names = new Map(entities.map((entity) => [entity.id, entity.name]));
     const displayOwner = (ownerType: string) => names.has(ownerType) && names.get(ownerType) !== OWNER_LABELS[ownerType] ? { ownerName: names.get(ownerType)! } : {};
     const displayed = tasks.map((task) => {
-      const next = { ...task, ...displayOwner(task.ownerType), ...(task.assigneeEmail ? { assignee: users.find((user) => user.email === task.assigneeEmail)?.name ?? task.assignee } : {}),
+      const next = { ...task, projectId: products.find(product => product.id === task.productId)?.projectId ?? "media-project", ...displayOwner(task.ownerType), ...(task.assigneeEmail ? { assignee: users.find((user) => user.email === task.assigneeEmail)?.name ?? task.assignee } : {}),
         ...(task.details ? { details: task.details.map((detail) => ({ ...detail, ...displayOwner(detail.ownerType), ...(detail.assigneeEmail ? { assignee: users.find((user) => user.email === detail.assigneeEmail)?.name ?? detail.assignee } : {}) })) } : {}),
         ...(activeSession ? { permissions: taskPermissions(activeSession, task, users) } : {}) };
       if (!activeSession) { delete next.assigneeEmail; delete next.createdByEmail; next.details?.forEach((detail) => { delete detail.assigneeEmail; }); }
@@ -108,6 +113,7 @@ async function handlePATCH(request: Request) {
     const index = tasks.findIndex((task) => task.id === id);
     if (index === -1) return Response.json({ error: "لم يتم العثور على المهمة." }, { status: 404 });
 
+    requireChanges(session, "tasks", tasks[index], { ...tasks[index], ...update });
     const updated = await normalizeTaskAssignments(session, { ...tasks[index], ...update } as Task, tasks[index]);
     updated.productName = (await createProductStore().getProducts()).find((p) => p.id === updated.productId)?.name ?? updated.productName;
     updated.progress = progressForStatus(updated.status, updated.progress);
@@ -116,6 +122,7 @@ async function handlePATCH(request: Request) {
     await store.setTasks(nextTasks);
     return Response.json({ task: { ...updated, permissions: taskPermissions(session, updated, await listUsers()) } });
   } catch (error) {
+    if (error instanceof PermissionError) return Response.json({ error: error.message }, { status: 403 });
     if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status });
     console.error("PATCH /api/tasks failed", error);
     const message = error instanceof Error ? error.message : "حدث خطأ غير متوقع";
@@ -124,7 +131,7 @@ async function handlePATCH(request: Request) {
 }
 
 async function handlePOST(request: Request) {
-  const session = await getAdminSession(request.headers);
+  const session = await getUserSession(request.headers);
   if (!session) return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول." }, { status: 401 });
   const parsed = taskInputSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
@@ -137,9 +144,11 @@ async function handlePOST(request: Request) {
       sourceOrder: Math.max(0, ...tasks.map((item) => item.sourceOrder)) + 1, updatedAt: new Date().toISOString() });
     await store.setTasks([...tasks, task]);
     return Response.json({ task: { ...task, permissions: taskPermissions(session, task, await listUsers()) } }, { status: 201 });
-  } catch (error) { if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status }); return Response.json({ error: "تعذر حفظ المهمة." }, { status: 500 }); }
+  } catch (error) { if (error instanceof PermissionError) return Response.json({ error: error.message }, { status: 403 }); if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status }); return Response.json({ error: "تعذر حفظ المهمة." }, { status: 500 }); }
 }
 
-export const PATCH = withActivity("تعديل", handlePATCH);
+export const PATCH = withActivity("تعديل", withResourceAccess("tasks", "change", handlePATCH));
 
-export const POST = withActivity("إضافة", handlePOST);
+export const POST = withActivity("إضافة", withResourceAccess("tasks", "create", handlePOST));
+
+export const DELETE = withActivity("حذف", withResourceAccess("tasks", "delete", request => deleteResource(request, "tasks")));

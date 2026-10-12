@@ -12,6 +12,7 @@ export function createProductStore() {
       const raw = store ? await store.get("products", { type: "json" }) : [...memory.values()];
       const products = new Map<string, Product>(DEFAULT_PRODUCTS.map((product) => [product.id, product]));
       if (Array.isArray(raw)) for (const item of raw) {
+        if (typeof item.id === "string" && item.deleted === true) { products.delete(item.id); continue; }
         const parsed = productInputSchema.safeParse(item);
         if (parsed.success && typeof item.id === "string" && item.id)
           products.set(item.id, { id: item.id, ...parsed.data });
@@ -19,8 +20,10 @@ export function createProductStore() {
       return [...products.values()];
     },
     async setProducts(products: Product[]) {
-      if (store) await store.setJSON("products", products);
-      else { memory.clear(); for (const product of products) memory.set(product.id, product); }
+      const previous = store ? await store.get("products", { type: "json" }) : [...memory.values()];
+      const tombstones = Array.isArray(previous) ? previous.filter(item => item.deleted === true && !products.some(value => value.id === item.id)) : [];
+      const next = [...tombstones, ...products];
+      if (store) await store.setJSON("products", next); else { memory.clear(); for (const item of next) memory.set(item.id, item); }
     },
   };
 }

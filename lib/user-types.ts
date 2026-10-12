@@ -1,3 +1,4 @@
+import type { ResourcePermissions } from "./permissions";
 export const USER_ROLES = { admin: "مسؤول النظام", editor: "محرر", viewer: "مشاهد" } as const;
 export type UserRole = keyof typeof USER_ROLES;
 export const POSITIONS = {
@@ -24,6 +25,7 @@ export const MANAGER_POSITIONS: Record<Position, Position[]> = {
 };
 export type Entity = { id: string; name: string; description: string; hidden: boolean; deleted?: boolean };
 export type PublicUser = {
+  resourcePermissions?: ResourcePermissions | null;
   canMessageLeadership?: boolean;
   projectId?: string | null;
   email: string; loginEmail: string; name: string; role: UserRole; active: boolean;
@@ -32,6 +34,7 @@ export type PublicUser = {
 };
 export type UserSession = PublicUser & { expiresAt: number; sessionVersion: number };
 export type SessionInfo = {
+  resourcePermissions?: ResourcePermissions;
   configured: boolean; authenticated: boolean; isAdmin: boolean;
   canManageUsers: boolean; mustChangePassword: boolean;
   email: string | null; loginEmail: string | null; role: UserRole | null;

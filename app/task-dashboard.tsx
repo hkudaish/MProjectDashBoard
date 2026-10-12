@@ -1,4 +1,6 @@
 "use client";
+import { PermissionsDialog } from "@/components/permissions-dialog";
+import { permitted, type Resource, type PermissionAction } from "@/lib/permissions";
 import { ChatPanel } from "@/components/chat-panel";
 import { ActivityDialog } from "@/components/activity-dialog";
 
@@ -217,7 +219,6 @@ export function TaskDashboard() {
   const [productDraft, setProductDraft] = useState<Omit<Product, "id"> | null>(null);
   const [productSaving, setProductSaving] = useState(false);
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [adminEmail, setAdminEmail] = useState("");
   const [authConfigured, setAuthConfigured] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
@@ -229,10 +230,13 @@ export function TaskDashboard() {
   const [adminManagerOpen, setAdminManagerOpen] = useState(false);
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [registrationReviewOpen, setRegistrationReviewOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [permissionEmail, setPermissionEmail] = useState<string | undefined>();
   const [activityOpen, setActivityOpen] = useState(false);
   const [mailboxOpen, setMailboxOpen] = useState(false);
   const [approvedRequest, setApprovedRequest] = useState<RegistrationRequest | null>(null);
   const [userSession, setUserSession] = useState<SessionInfo | null>(null);
+  const canResource = (resource: Resource, action: PermissionAction) => permitted(userSession, resource, action);
   const registrationCount = useRegistrationCount(Boolean(userSession?.canManageUsers));
   useEffect(() => {
     if (!userSession?.canManageUsers) return;
@@ -299,7 +303,7 @@ export function TaskDashboard() {
       if (!current) return;
       setUserSession(data);
       setAuthConfigured(Boolean(data.configured));
-      setIsAdmin(Boolean(data.isAdmin));
+
       setAdminEmail(data.email ?? "");
     }).catch(() => {
       if (current) setAuthConfigured(false);
@@ -324,13 +328,15 @@ export function TaskDashboard() {
     return labels;
   }, [entities]);
   const OWNER_OPTIONS = Object.entries(ownerLabels);
-  function taskCanEdit(task: Task) { return task.permissions?.canEdit ?? userSession?.position === "system_admin"; }
+  useEffect(() => { if (!userSession?.authenticated) return; let cancelled = false; const timer = setInterval(() => { if (document.visibilityState !== "visible") return; void fetch("/api/auth/session", { cache: "no-store" }).then(response => response.json() as Promise<SessionInfo>).then(next => { if (!cancelled && JSON.stringify(next) !== JSON.stringify(userSession)) { setUserSession(next);  setAdminEmail(next.email ?? ""); void loadTasks(); } }).catch(() => undefined); }, 12000); return () => { cancelled = true; clearInterval(timer); }; }, [userSession, loadTasks]);
+  function taskCanEdit(task: Task | null | undefined) { return Boolean(task && (task.permissions?.canEdit ?? userSession?.position === "system_admin")); }
   const canEditMain = creatingTask || draft?.permissions?.canEditMain === true || userSession?.position === "system_admin";
   const canUpdateMain = creatingTask || draft?.permissions?.canUpdateMain === true || userSession?.position === "system_admin";
   const canAssign = creatingTask || draft?.permissions?.canAssign === true || userSession?.position === "system_admin";
+  async function deleteRecord(resource: Resource, id: string) { if (!window.confirm("حذف هذا السجل نهائيًا؟ تتوقف العملية إذا كان مرتبطًا ببيانات أخرى.")) return; try { const response = await fetch(`/api/${resource}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); const data = await response.json() as { error?: string }; if (!response.ok) throw new Error(data.error || "تعذر الحذف."); toast.success("تم حذف السجل."); refreshTasks(); return true; } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر الحذف."); return false; } }
   function refreshAdministration() {
     void loadDirectory(); void loadTasks();
-    void fetch("/api/auth/session", { cache: "no-store" }).then((response) => response.json() as Promise<SessionInfo>).then((session: SessionInfo) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }).catch(() => undefined);
+    void fetch("/api/auth/session", { cache: "no-store" }).then((response) => response.json() as Promise<SessionInfo>).then((session: SessionInfo) => { setUserSession(session);  setAdminEmail(session.email ?? ""); }).catch(() => undefined);
   }
 
   async function submitAdminLogin(event: React.FormEvent<HTMLFormElement>) {
@@ -346,7 +352,7 @@ export function TaskDashboard() {
       const data = await response.json() as SessionInfo & { error?: string };
       if (!response.ok || !data.authenticated) throw new Error(data.error || "تعذر تسجيل الدخول.");
       setUserSession(data);
-      setIsAdmin(data.isAdmin);
+
       setAdminEmail(data.email ?? loginEmail);
       setLoginPassword("");
       setLoginOpen(false);
@@ -371,7 +377,7 @@ export function TaskDashboard() {
       setRegistrationReviewOpen(false);
       setMailboxOpen(false);
       setApprovedRequest(null);
-      setIsAdmin(false);
+
       setAdminEmail("");
       setEditing(null);
       setCreatingTask(false);
@@ -450,15 +456,15 @@ export function TaskDashboard() {
   const visibleProducts = useMemo(() => products.filter((product) => (product.projectId ?? DEFAULT_PROJECT_ID) === activeProjectId), [products, activeProjectId]);
   const projectTasks = useMemo(() => {
     const ids = new Set(visibleProducts.map((product) => product.id));
-    return tasks.filter((task) => ids.has(task.productId));
-  }, [tasks, visibleProducts]);
+    return tasks.filter((task) => ids.has(task.productId) || !products.length && (task.projectId ?? DEFAULT_PROJECT_ID) === activeProjectId);
+  }, [tasks, visibleProducts, products.length, activeProjectId]);
 
   function selectProject(id: string) {
     setActiveProjectId(id); setProductFilter("all"); setStatusFilter("all"); setOwnerFilter("all"); setQuery("");
   }
 
   async function saveProject() {
-    if (!userSession?.canManageUsers || !projectDraft) return;
+    if (!(editingProjectId ? canResource("projects", "edit") || canResource("projects", "update") : canResource("projects", "create")) || !projectDraft) return;
     const parsed = projectInputSchema.safeParse(projectDraft);
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message); return; }
     setProjectSaving(true);
@@ -500,14 +506,14 @@ export function TaskDashboard() {
     .slice(0, 6), [projectTasks]);
 
   function openTask(task: Task) {
-    if (!taskCanEdit(task)) return;
+    if (!taskCanEdit(task) && !task.permissions?.canDelete) return;
     setCreatingTask(false);
     setEditing(task);
     setDraft({ ...task, details: (task.details ?? []).map((detail) => ({ ...detail })) });
   }
 
   function newTask(productId = visibleProducts[0]?.id ?? "") {
-    if (!isAdmin) return;
+    if (!canResource("tasks", "create")) return;
     const date = new Date();
     const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     setEditing(null);
@@ -517,7 +523,7 @@ export function TaskDashboard() {
   }
 
   async function saveProduct() {
-    if (!isAdmin || !productDraft || editingProductId && !userSession?.canManageUsers) return;
+    if (!productDraft || !(editingProductId ? canResource("products", "edit") || canResource("products", "update") : canResource("products", "create"))) return;
     const parsed = productInputSchema.safeParse(productDraft);
     if (!parsed.success) { toast.error(parsed.error.issues[0]?.message); return; }
     setProductSaving(true);
@@ -612,7 +618,7 @@ export function TaskDashboard() {
           </div>
           <div className="flex shrink-0 items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
             <DropdownMenu dir="rtl"><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-xl border-teal-100 bg-teal-50/50 text-teal-900"><Settings className="size-4" /><span>الإعدادات</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">{userSession?.canManageUsers && <><DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus className="size-4" />إضافة مشروع</DropdownMenuItem><DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus className="size-4" />إضافة منتج</DropdownMenuItem><DropdownMenuSeparator /></>}{userSession?.authenticated && !userSession.mustChangePassword && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setActivityOpen(true)}><ListChecks className="size-4" />سجل العمليات</DropdownMenuItem>}
+              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">{userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setPermissionEmail(undefined); setPermissionsOpen(true); }}><Settings className="size-4" />صلاحيات المستخدمين</DropdownMenuItem>}{(canResource("projects", "create") || canResource("products", "create")) && <>{canResource("projects", "create") && <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus className="size-4" />إضافة مشروع</DropdownMenuItem>}{canResource("products", "create") && <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus className="size-4" />إضافة منتج</DropdownMenuItem>}<DropdownMenuSeparator /></>}{userSession?.authenticated && !userSession.mustChangePassword && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setActivityOpen(true)}><ListChecks className="size-4" />سجل العمليات</DropdownMenuItem>}
                 <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => setRegistrationOpen(true)}><UserPlus className="size-4" />طلب تسجيل</DropdownMenuItem>
                 {userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setRegistrationReviewOpen(true)}><ListChecks className="size-4" />طلبات التسجيل{registrationCount > 0 && <span className="ms-auto rounded-full bg-amber-100 px-2 text-xs font-bold text-amber-800">{registrationCount}</span>}</DropdownMenuItem>}
                 <DropdownMenuSeparator />
@@ -633,14 +639,14 @@ export function TaskDashboard() {
       </header>
 
       <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-8 sm:py-8">
-        <ProjectClock />
+        <ProjectClock />{!authLoading && !userSession?.authenticated && <div role="status" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-teal-100 bg-teal-50 p-4 text-sm text-teal-900"><p>سجّل الدخول للاطلاع على بيانات المشاريع والمنتجات والمهام وفق صلاحيات حسابك.</p><Button variant="outline" onClick={() => setLoginOpen(true)}>تسجيل الدخول</Button></div>}
         <section aria-label="اختيار المشروع" className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-teal-100 bg-white p-4 shadow-sm">
-          <label className="grid min-w-60 flex-1 gap-2 text-sm font-bold text-teal-900">المشروع<Select dir="rtl" value={activeProjectId} onValueChange={selectProject}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></label>
-          {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
+          {currentProject && canResource("projects", "delete") && <Button variant="outline" className="text-rose-700" onClick={() => void deleteRecord("projects", currentProject.id)}>حذف المشروع</Button>}<label className="grid min-w-60 flex-1 gap-2 text-sm font-bold text-teal-900">المشروع<Select dir="rtl" value={activeProjectId} onValueChange={selectProject}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></label>
+          {(canResource("projects", "edit") || canResource("projects", "update")) && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
           {currentProject?.description && <p className="w-full whitespace-pre-wrap text-sm leading-6 text-slate-500">{currentProject.description}</p>}
           <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-            <div className="flex flex-wrap gap-3">{isAdmin && <>
-          
+            <div className="flex flex-wrap gap-3">{canResource("tasks", "create") && <>
+
           <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" disabled={!visibleProducts.length} onClick={() => newTask()}><Plus />إضافة مهمة</Button>
             </>}</div>
             <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600" onClick={refreshTasks} disabled={refreshing}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />تحديث البيانات</Button>
@@ -706,10 +712,10 @@ export function TaskDashboard() {
                   <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, backgroundColor: colors.accent }} /></div>
                   <div className="mt-3 flex items-center justify-between text-sm"><span className={late ? "rounded-full bg-red-50 px-2 py-1 font-bold text-red-700" : "rounded-full bg-emerald-50 px-2 py-1 font-bold text-emerald-800"}>{late ? `${late} متأخرة` : "ضمن المسار"}</span><ChevronLeft className="size-4 text-slate-400" /></div>
                 </button>
-                <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">{canResource("products", "delete") && <Button variant="outline" size="sm" className="text-rose-700" onClick={() => void deleteRecord("products", product.id)}>حذف المنتج</Button>}
                   {(product.description || product.details?.length) && <Button variant="outline" size="sm" onClick={() => setViewingProduct(product)}>تفاصيل المنتج</Button>}
-                  {userSession?.canManageUsers && <Button variant="outline" size="sm" onClick={() => { setEditingProductId(product.id); setProductDraft({ ...product, details: (product.details ?? []).map((detail) => ({ ...detail })) }); }}><Pencil />تعديل المنتج</Button>}
-                  {isAdmin && <Button variant="outline" size="sm" onClick={() => newTask(product.id)}><Plus />إضافة مهمة</Button>}
+                  {(canResource("products", "edit") || canResource("products", "update")) && <Button variant="outline" size="sm" onClick={() => { setEditingProductId(product.id); setProductDraft({ ...product, details: (product.details ?? []).map((detail) => ({ ...detail })) }); }}><Pencil />تعديل المنتج</Button>}
+                  {canResource("tasks", "create") && <Button variant="outline" size="sm" onClick={() => newTask(product.id)}><Plus />إضافة مهمة</Button>}
                 </div>
                 </article>;
               })}</div>
@@ -748,7 +754,7 @@ export function TaskDashboard() {
                         <TableCell className="pb-4 pt-12 align-top"><p className="font-bold">{task.ownerName ?? ownerLabels[task.ownerType] ?? OWNER_LABELS[task.ownerType]}</p><p className="mt-1 text-sm text-slate-500">{task.assignee || "غير مسند لشخص"}</p></TableCell>
                         <TableCell className="pb-4 pt-12 align-top">{(task.permissions?.canUpdateMain || userSession?.position === "system_admin") ? <Select dir="rtl" value={task.status} onValueChange={(value) => void quickStatus(task, value as TaskStatus)}><SelectTrigger className={`h-10 w-[165px] rounded-xl text-right font-bold ${STATUS_COLORS[task.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select> : <StatusPill status={task.status} />}</TableCell>
                         <TableCell className="pb-4 pt-12 align-top"><div className="w-28"><div className="mb-1 text-sm font-black tabular-nums">{task.progress}%</div><TaskProgress task={task} /></div></TableCell>
-                        <TableCell className="px-4 pb-4 pt-12 align-top">{taskCanEdit(task) && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell>
+                        <TableCell className="px-4 pb-4 pt-12 align-top">{task.permissions?.canDelete && <Button variant="ghost" size="sm" className="text-rose-700" onClick={() => void deleteRecord("tasks", task.id)}>حذف</Button>}{taskCanEdit(task) && <Button variant="ghost" size="icon-sm" aria-label={`تعديل ${task.title}`} onClick={() => openTask(task)}><Pencil /></Button>}</TableCell>
                       </TableRow>
                       {!!task.details?.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="px-5 pb-5 pt-0"><TaskDetailsReport task={task} ownerLabels={ownerLabels} /></TableCell></TableRow>}
                     </Fragment>
@@ -776,7 +782,7 @@ export function TaskDashboard() {
             {loginError && <p role="alert" className="text-sm font-semibold text-red-700">{loginError}</p>}
             {!authConfigured && <p role="alert" className="text-sm text-amber-800">تسجيل الدخول غير مُعدّ على الخادم.</p>}
             <Button type="button" variant="link" className="justify-start px-0 text-teal-800" disabled={loggingIn} onClick={() => { setLoginPassword(""); setLoginOpen(false); setResetRequestOpen(true); }}>نسيت كلمة المرور؟ طلب إعادة ضبط</Button>
-            <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button type="submit" className="bg-[#116d7b] hover:bg-[#0c5965]" disabled={loggingIn || !authConfigured}>{loggingIn ? <Loader2 className="animate-spin" /> : <LogIn />}دخول</Button><Button type="button" variant="outline" onClick={() => setLoginOpen(false)} disabled={loggingIn}>إلغاء</Button></DialogFooter>
+            <DialogFooter className="flex-row-reverse justify-start sm:justify-start">{!creatingTask && draft?.permissions?.canDelete && <Button variant="outline" className="text-rose-700" disabled={saving} onClick={() => void deleteRecord("tasks", draft.id).then(ok => { if (ok) { setEditing(null); setDraft(null); } })}>حذف المهمة</Button>}<Button type="submit" className="bg-[#116d7b] hover:bg-[#0c5965]" disabled={loggingIn || !authConfigured}>{loggingIn ? <Loader2 className="animate-spin" /> : <LogIn />}دخول</Button><Button type="button" variant="outline" onClick={() => setLoginOpen(false)} disabled={loggingIn}>إلغاء</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -785,25 +791,25 @@ export function TaskDashboard() {
       <RegistrationRequestDialog open={registrationOpen} onOpenChange={setRegistrationOpen} />
       <MailboxDialog open={mailboxOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setMailboxOpen} />
       <RegistrationReviewDialog open={registrationReviewOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setRegistrationReviewOpen} onApproved={request => { setApprovedRequest(request); setAdminManagerOpen(true); }} />
-      <ActivityDialog key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} open={activityOpen && Boolean(userSession?.authenticated && !userSession.mustChangePassword)} onOpenChange={setActivityOpen} administrator={Boolean(userSession?.canManageUsers)} /><UserAccountManager projectId={activeProjectId} initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
-      <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }} />
+      <PermissionsDialog open={permissionsOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setPermissionsOpen} initialEmail={permissionEmail} onChanged={refreshAdministration} /><ActivityDialog key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} open={activityOpen && Boolean(userSession?.authenticated && !userSession.mustChangePassword)} onOpenChange={setActivityOpen} administrator={Boolean(userSession?.canManageUsers)} /><UserAccountManager onPermissions={email => { setPermissionEmail(email); setPermissionsOpen(true); }} projectId={activeProjectId} initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
+      <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session);  setAdminEmail(session.email ?? ""); }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 
-      <Dialog open={!!projectDraft && Boolean(userSession?.canManageUsers)} onOpenChange={(open) => { if (!open && !projectSaving) { setProjectDraft(null); setEditingProjectId(null); } }}>
+      <Dialog open={!!projectDraft && Boolean(editingProjectId ? canResource("projects", "edit") || canResource("projects", "update") : canResource("projects", "create"))} onOpenChange={(open) => { if (!open && !projectSaving) { setProjectDraft(null); setEditingProjectId(null); } }}>
         <DialogContent dir="rtl" className="rounded-3xl text-right sm:max-w-lg"><DialogHeader className="text-right sm:text-right"><DialogTitle>{editingProjectId ? "تعديل المشروع" : "إضافة مشروع جديد"}</DialogTitle><DialogDescription>لكل مشروع منتجاته ومهامه. اختر المشروع من القائمة لمتابعة إنجازه وإدارة محتواه.</DialogDescription></DialogHeader>
-          {projectDraft && <fieldset disabled={projectSaving} className="grid gap-4"><label className="grid gap-2 text-sm font-bold">اسم المشروع<Input maxLength={120} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">وصف المشروع<Textarea maxLength={1200} value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} className="rounded-xl" /></label><div className="grid gap-2"><p className="text-sm font-bold">الجهات المسؤولة عن المشروع</p>{entities.filter((entity) => !entity.deleted && (!entity.hidden || projectDraft.entityIds?.includes(entity.id))).map((entity) => <label key={entity.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={projectDraft.entityIds?.includes(entity.id) ?? false} disabled={entity.hidden && !projectDraft.entityIds?.includes(entity.id)} onChange={(event) => setProjectDraft({ ...projectDraft, entityIds: event.target.checked ? [...(projectDraft.entityIds ?? []), entity.id] : (projectDraft.entityIds ?? []).filter((id) => id !== entity.id) })} />{entity.name}{entity.hidden && " · محجوبة"}</label>)}</div></fieldset>}
+          {projectDraft && <fieldset disabled={projectSaving} className="grid gap-4"><label className="grid gap-2 text-sm font-bold">اسم المشروع<Input maxLength={120} disabled={Boolean(editingProjectId && !canResource("projects", "edit"))} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} className="h-11 rounded-xl" /></label><label className="grid gap-2 text-sm font-bold">وصف المشروع<Textarea maxLength={1200} disabled={Boolean(editingProjectId && !canResource("projects", "edit"))} value={projectDraft.description} onChange={(event) => setProjectDraft({ ...projectDraft, description: event.target.value })} className="rounded-xl" /></label><div className="grid gap-2"><p className="text-sm font-bold">الجهات المسؤولة عن المشروع</p>{entities.filter((entity) => !entity.deleted && (!entity.hidden || projectDraft.entityIds?.includes(entity.id))).map((entity) => <label key={entity.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={projectDraft.entityIds?.includes(entity.id) ?? false} disabled={Boolean(editingProjectId && !canResource("projects", "update")) || entity.hidden && !projectDraft.entityIds?.includes(entity.id)} onChange={(event) => setProjectDraft({ ...projectDraft, entityIds: event.target.checked ? [...(projectDraft.entityIds ?? []), entity.id] : (projectDraft.entityIds ?? []).filter((id) => id !== entity.id) })} />{entity.name}{entity.hidden && " · محجوبة"}</label>)}</div></fieldset>}
           <DialogFooter><Button disabled={projectSaving} onClick={() => void saveProject()}>{projectSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProjectId ? "حفظ التعديلات" : "إنشاء المشروع"}</Button><Button variant="outline" disabled={projectSaving} onClick={() => { setProjectDraft(null); setEditingProjectId(null); }}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!productDraft && isAdmin} onOpenChange={(open) => { if (!open && !productSaving) { setProductDraft(null); setEditingProductId(null); } }}>
+      <Dialog open={!!productDraft && Boolean(editingProductId ? canResource("products", "edit") || canResource("products", "update") : canResource("products", "create"))} onOpenChange={(open) => { if (!open && !productSaving) { setProductDraft(null); setEditingProductId(null); } }}>
         <DialogContent dir="rtl" className="max-h-[92vh] overflow-y-auto rounded-3xl text-right sm:max-w-6xl">
           <DialogHeader className="text-right sm:text-right"><DialogTitle>{editingProductId ? "تعديل المنتج" : "إضافة منتج جديد"}</DialogTitle><DialogDescription>أدخل اسم المنتج والمستهدف ووصفه، وأضف صفوف التفاصيل المناسبة.</DialogDescription></DialogHeader>
           {productDraft && <fieldset disabled={productSaving} className="grid gap-5">
-            <label className="grid gap-2 text-sm font-bold">اسم المنتج<Input maxLength={120} className="h-11 rounded-xl" value={productDraft.name} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} /></label>
-            <label className="grid gap-2 text-sm font-bold">المستهدف<Input maxLength={120} placeholder="مثل: 10 تقارير" className="h-11 rounded-xl" value={productDraft.target} onChange={(e) => setProductDraft({ ...productDraft, target: e.target.value })} /></label>
-            <label className="grid gap-2 text-sm font-bold">وصف المنتج<Textarea maxLength={1200} className="rounded-xl" value={productDraft.description} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} /></label>
-            <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} label="تفاصيل المنتج" users={assignmentUsers} ownerLabels={ownerLabels} onChange={(details) => setProductDraft({ ...productDraft, details })} />
+            <label className="grid gap-2 text-sm font-bold">اسم المنتج<Input maxLength={120} className="h-11 rounded-xl" disabled={Boolean(editingProductId && !canResource("products", "edit"))} value={productDraft.name} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} /></label>
+            <label className="grid gap-2 text-sm font-bold">المستهدف<Input maxLength={120} placeholder="مثل: 10 تقارير" className="h-11 rounded-xl" disabled={Boolean(editingProductId && !canResource("products", "edit"))} value={productDraft.target} onChange={(e) => setProductDraft({ ...productDraft, target: e.target.value })} /></label>
+            <label className="grid gap-2 text-sm font-bold">وصف المنتج<Textarea maxLength={1200} className="rounded-xl" disabled={Boolean(editingProductId && !canResource("products", "edit"))} value={productDraft.description} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} /></label>
+            <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} canEditContent={!editingProductId || canResource("products", "edit")} canAdd={!editingProductId || canResource("products", "edit")} canAssign={!editingProductId || canResource("products", "edit")} canUpdate={!editingProductId || canResource("products", "update")} label="تفاصيل المنتج" users={assignmentUsers} ownerLabels={ownerLabels} onChange={(details) => setProductDraft({ ...productDraft, details })} />
           </fieldset>}
           <DialogFooter><Button disabled={productSaving} onClick={() => void saveProduct()}>{productSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProductId ? "حفظ التعديلات" : "إضافة المنتج"}</Button><Button variant="outline" disabled={productSaving} onClick={() => { setProductDraft(null); setEditingProductId(null); }}>إلغاء</Button></DialogFooter>
         </DialogContent>
@@ -821,7 +827,7 @@ export function TaskDashboard() {
           {draft && <div className="grid gap-5 py-2">
             {creatingTask && <label className="grid gap-2 text-sm font-bold">المنتج<Select dir="rtl" value={draft.productId} disabled={saving} onValueChange={(productId) => setDraft({ ...draft, productId, productName: products.find((p) => p.id === productId)?.name ?? "" })}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="اختر المنتج" /></SelectTrigger><SelectContent dir="rtl">{visibleProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>)}</SelectContent></Select></label>}
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea disabled={saving || !canEditMain} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
-            <TaskDetailsEditor details={draft.details ?? []} users={assignmentUsers} ownerLabels={ownerLabels} canAssign={canAssign} canEditContent={Boolean(isAdmin)} canAdd={canEditMain && canAssign} editableDetailIds={creatingTask || userSession?.position === "system_admin" ? undefined : [...(draft.permissions?.editableDetailIds ?? []), ...(draft.details ?? []).filter((row) => !editing?.details?.some((old) => old.id === row.id)).map((row) => row.id)]} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />
+            <TaskDetailsEditor details={draft.details ?? []} users={assignmentUsers} ownerLabels={ownerLabels} canAssign={canAssign} canUpdate={creatingTask || canResource("tasks", "update")} canEditContent={creatingTask || canResource("tasks", "edit")} canAdd={canEditMain && canAssign} editableDetailIds={creatingTask || userSession?.position === "system_admin" ? undefined : [...(draft.permissions?.editableDetailIds ?? []), ...(draft.details ?? []).filter((row) => !editing?.details?.some((old) => old.id === row.id)).map((row) => row.id)]} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" disabled={saving || !canUpdateMain} value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: progressForStatus(value as TaskStatus, draft.progress) })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
               <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" disabled={saving || !canEditMain} value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{!ownerLabels[draft.ownerType] && <SelectItem value={draft.ownerType} disabled>{draft.ownerName ?? OWNER_LABELS[draft.ownerType] ?? "جهة محجوبة"}</SelectItem>}{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
@@ -832,7 +838,7 @@ export function TaskDashboard() {
             <p className="-mt-2 text-xs leading-6 text-slate-500">تُحسب نسبة الإنجاز تلقائيًا حسب الحالة. يمكن تعديل آخر نسبة إنجاز للحالة المتعثرة.</p>
             <label className="grid gap-2 text-sm font-bold">ملاحظات التنفيذ<Textarea disabled={saving || !canUpdateMain} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="أضف آخر المستجدات أو العوائق أو تفاصيل التسليم..." className="min-h-28 rounded-xl text-base leading-7" /></label>
           </div>}
-          <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving}>{saving ? <Loader2 className="animate-spin" /> : <Check />}{creatingTask ? "إضافة المهمة" : "حفظ التحديث"}</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setCreatingTask(false); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
+          <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving || !creatingTask && !taskCanEdit(draft!)}>{saving ? <Loader2 className="animate-spin" /> : <Check />}{creatingTask ? "إضافة المهمة" : "حفظ التحديث"}</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setCreatingTask(false); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </main>
