@@ -14,6 +14,7 @@ export const registrationInputSchema = z.object({
   name: z.string().trim().min(1).max(120), jobTitle: z.string().trim().min(1).max(120),
   department: z.string().trim().min(1).max(120), email: emailSchema,
   entityId: z.string().trim().min(1, "اختر اسم الجهة.").max(120),
+  projectId: z.string().trim().min(1, "اختر اسم المشروع.").max(120),
 }).strict();
 export const reviewInputSchema = z.object({ id: z.string().uuid(), status: z.enum(["approved", "rejected", "on_hold"]), note: z.string().trim().max(2000).default("") }).strict();
 export class RegistrationError extends Error {}
@@ -78,14 +79,16 @@ export async function submitRegistration(input: z.infer<typeof registrationInput
   const parsed = registrationInputSchema.parse(input);
   const entity = (await createEntityStore().getEntities()).find(item => item.id === parsed.entityId && !item.hidden && !item.deleted);
   if (!entity) throw new RegistrationError("الجهة المحددة غير متاحة. اختر جهة من القائمة.");
+  const project = (await createProjectStore().getProjects()).find(item => item.id === parsed.projectId);
+  if (!project) throw new RegistrationError("المشروع المحدد غير موجود. اختر مشروعًا من القائمة.");
   const users = await listUsers();
   if (users.some(user => user.loginEmail === parsed.email)) return;
   const admins = users.filter(user => user.active && user.position === "system_admin");
   const id = await update(items => {
     if (items.some(item => item.email === parsed.email && (item.status !== "rejected" || Date.now() - Date.parse(item.createdAt) < 86400000))) return;
     const now = new Date().toISOString();
-    const request: RegistrationRequest = { ...parsed, entityName: entity.name, id: randomUUID(), status: "pending", createdAt: now, updatedAt: now, note: "", reviewedBy: null, notifications: [] };
-    for (const admin of admins) notify(request, admin.loginEmail, "طلب تسجيل جديد", `ورد طلب تسجيل جديد في التطبيق.\nالاسم: ${request.name}\nالمسمى الوظيفي: ${request.jobTitle}\nالإدارة: ${request.department}\nاسم الجهة: ${request.entityName}\nالبريد الإلكتروني: ${request.email}\nراجع الطلب من الإعدادات ← طلبات التسجيل.`);
+    const request: RegistrationRequest = { ...parsed, entityName: entity.name, projectName: project.name, id: randomUUID(), status: "pending", createdAt: now, updatedAt: now, note: "", reviewedBy: null, notifications: [] };
+    for (const admin of admins) notify(request, admin.loginEmail, "طلب تسجيل جديد", `ورد طلب تسجيل جديد في التطبيق.\nالاسم: ${request.name}\nالمسمى الوظيفي: ${request.jobTitle}\nالإدارة: ${request.department}\nاسم المشروع: ${request.projectName}\nاسم الجهة: ${request.entityName}\nالبريد الإلكتروني: ${request.email}\nراجع الطلب من الإعدادات ← طلبات التسجيل.`);
     items.push(request);
     return request.id;
   });

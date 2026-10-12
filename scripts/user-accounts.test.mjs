@@ -58,6 +58,7 @@ async function load(path) {
   return ready;
 }
 async function exports(path) { const sourceModule = await load(resolve(root, path)); await sourceModule.evaluate(); return sourceModule.namespace; }
+const projectDefinitions = await exports("lib/projects.ts");
 const accounts = await exports("lib/user-accounts.ts");
 const auth = await exports("lib/admin-auth.ts");
 const login = await exports("app/api/auth/login/route.ts");
@@ -245,7 +246,7 @@ test("concurrent chat sends survive persistence and audit logs protect identitie
 
 test("registration is public, validated and deduplicated, and review data stays private", async () => {
   const admin=await adminCookie();
-  const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",entityId:"wamy",email:"applicant@example.com"};
+  const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",entityId:"wamy",projectId:projectDefinitions.DEFAULT_PROJECT.id,email:"applicant@example.com"};
   assert.equal((await registrationRoute.POST(request({...input,email:"invalid"}))).status,400);
   assert.equal((await registrationRoute.POST(request(input,"","POST","https://foreign.example"))).status,403);
   for(const response of await Promise.all([registrationRoute.POST(request(input)),registrationRoute.POST(request(input))])) assert.equal(response.status,201);
@@ -262,7 +263,7 @@ test("registration is public, validated and deduplicated, and review data stays 
 });
 test("registration requires an available entity and preserves the applicant's department separately", async () => {
   await adminCookie();
-  const input={name:"Applicant",jobTitle:"موظف",department:"Media department",email:"applicant@example.com",entityId:"wamy"};
+  const input={name:"Applicant",jobTitle:"موظف",department:"Media department",email:"applicant@example.com",entityId:"wamy",projectId:projectDefinitions.DEFAULT_PROJECT.id};
   const {entityId,...missing}=input;
   assert.equal((await registrationRoute.POST(request(missing))).status,400);
   await store.setJSON("entities",[{id:"hidden",name:"Hidden",hidden:true},{id:"deleted",name:"Deleted",hidden:false,deleted:true}]);
@@ -271,6 +272,34 @@ test("registration requires an available entity and preserves the applicant's de
   assert.equal((await registrationRoute.POST(request(input))).status,201);
   const row=(await registrationService.listRegistrations())[0];
   assert.equal(row.entityId,entityId);assert.equal(row.entityName,"الندوة العالمية");assert.equal(row.department,"Media department");
+});
+test("registration requires a known project and user project changes preserve credentials and other users", async () => {
+  const admin=await adminCookie();
+  await store.setJSON("projects",[{id:"assigned-project",name:"مشروع المستخدم",description:""}]);
+  const input={name:"Applicant",jobTitle:"موظف",department:"الإدارة",email:"applicant@example.com",entityId:"wamy",projectId:"assigned-project"};
+  const {projectId,...missing}=input;
+  assert.equal((await registrationRoute.POST(request(missing))).status,400);
+  assert.equal((await registrationRoute.POST(request({...input,projectId:"missing"}))).status,400);
+  assert.equal((await registrationRoute.POST(request(input))).status,201);
+  const row=(await registrationService.listRegistrations())[0];assert.equal(row.projectId,projectId);assert.equal(row.projectName,"مشروع المستخدم");
+  await chatUser(admin,"alice@example.com","Alice");
+  const original=await accounts.findAccount("alice@example.com"),other=await accounts.findAccount("admin@example.com");
+  assert.equal((await users.PATCH(request({email:"alice@example.com",projectId:"assigned-project"},admin,"PATCH"))).status,200);
+  const updated=await accounts.findAccount("alice@example.com");assert.equal(updated.projectId,"assigned-project");assert.equal(updated.passwordHash,original.passwordHash);assert.equal(updated.entityId,original.entityId);
+  assert.deepEqual(await accounts.findAccount("admin@example.com"),other);
+  assert.equal((await users.PATCH(request({email:"alice@example.com",projectId:"unknown"},admin,"PATCH"))).status,400);
+  assert.equal((await accounts.findAccount("alice@example.com")).projectId,"assigned-project");
+  assert.equal((await(await users.GET(request(null,admin,"GET"))).json()).users.find(u=>u.email==="alice@example.com").projectId,"assigned-project");
+});
+test("project managers cannot add products or projects even through direct API requests", async () => {
+  const admin=await adminCookie();await newUser(admin,"project@example.com","editor");
+  const first=await signIn("project@example.com",temporaryPassword);const changed=await password.POST(request({currentPassword:temporaryPassword,newPassword:personalPassword},cookie(first)));const manager=cookie(changed);
+  const beforeProducts=data.get("products"),beforeProjects=data.get("projects");
+  assert.equal((await products.POST(request({name:"Unauthorized product",projectId:projectDefinitions.DEFAULT_PROJECT.id},manager))).status,403);
+  assert.equal((await projects.POST(request({name:"Unauthorized project"},manager))).status,403);
+  assert.equal((await(await session.GET(request(null,manager,"GET"))).json()).canManageProducts,false);
+  assert.deepEqual(data.get("products"),beforeProducts);assert.deepEqual(data.get("projects"),beforeProjects);
+  assert.equal((await products.POST(request({name:"CSRF product",projectId:projectDefinitions.DEFAULT_PROJECT.id},admin,"POST","https://foreign.example"))).status,403);
 });
 test("mail setup identifies the restricted Resend test sender", async () => {
   assert.equal(await registrationService.registrationMailMode(),"unconfigured");
@@ -282,7 +311,7 @@ test("mail setup identifies the restricted Resend test sender", async () => {
   assert.equal(await registrationService.registrationMailMode(),"live");
 });
 test("approved registration provisions once, sends separate approval and activation messages, and forces password change", async () => {
-  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",entityId:"wamy",email:"applicant@example.com"};
+  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الندوة العالمية",entityId:"wamy",projectId:projectDefinitions.DEFAULT_PROJECT.id,email:"applicant@example.com"};
   const sent=[];globalThis.fetch=async(url,options)=>{assert.equal(url,"https://api.resend.com/emails");sent.push({body:JSON.parse(options.body),key:options.headers["Idempotency-Key"]});return new Response(JSON.stringify({id:"sent"}),{status:200});};
   process.env.RESEND_API_KEY="test-key";process.env.REGISTRATION_MAIL_FROM="noreply@example.com";
   assert.equal((await registrationRoute.POST(request(input))).status,201);
@@ -296,6 +325,7 @@ test("approved registration provisions once, sends separate approval and activat
   assert.equal((await users.POST(request(accountInput,admin))).status,201);
   const first=await accounts.findAccount(input.email);assert.equal(first.registrationRequestId,row.id);
   assert.equal(first.mustChangePassword,true);assert.equal(first.active,true);
+  assert.equal(first.projectId,"welcome-project");
   const firstLogin=await signIn(input.email,input.email);assert.equal(firstLogin.status,200);
   const firstSession=await firstLogin.clone().json();assert.equal(firstSession.mustChangePassword,true);assert.equal(firstSession.canManageUsers,false);
   assert.ok([401,403].includes((await tasks.PATCH(request({id:seed.id,status:"completed"},cookie(firstLogin),"PATCH"))).status));
@@ -311,7 +341,7 @@ test("approved registration provisions once, sends separate approval and activat
   assert.equal(new Set(sent.map(item=>item.key)).size,sent.length);
 });
 test("registration hold and rejection notify the applicant, and failed delivery can be retried", async () => {
-  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"موظف",department:"الإدارة",entityId:"wamy",email:"applicant@example.com"};
+  const admin=await adminCookie();const input={name:"Applicant",jobTitle:"موظف",department:"الإدارة",entityId:"wamy",projectId:projectDefinitions.DEFAULT_PROJECT.id,email:"applicant@example.com"};
   await registrationRoute.POST(request(input));const row=(await registrationService.listRegistrations())[0];
   for(const status of ["on_hold","rejected"]){assert.equal((await registrationRoute.PATCH(request({id:row.id,status,note:"Review note"},admin,"PATCH"))).status,200);}
   const reviewed=(await registrationService.listRegistrations())[0];
@@ -329,7 +359,7 @@ test("registration hold and rejection notify the applicant, and failed delivery 
   assert.equal((await users.POST(request({name:input.name,email:input.email,position:"employee",password:temporaryPassword,registrationRequestId:row.id},admin))).status,400);
 });
 test("registration activation recovers after account creation is interrupted", async () => {
-  await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الإدارة",entityId:"wamy",email:"applicant@example.com"};
+  await adminCookie();const input={name:"Applicant",jobTitle:"مدير مشروع",department:"الإدارة",entityId:"wamy",projectId:projectDefinitions.DEFAULT_PROJECT.id,email:"applicant@example.com"};
   await registrationService.submitRegistration(input);const row=(await registrationService.listRegistrations())[0];
   await registrationService.reviewRegistration({id:row.id,status:"approved",note:""},"admin@example.com");
   await accounts.createUser({name:input.name,email:input.email,position:"project_manager",managerEmail:null,additionalManagerEmail:null,entityId:null,password:temporaryPassword,registrationRequestId:row.id});
@@ -343,7 +373,7 @@ test("Gmail notifications use HTTPS and MIME from the configured Google account"
   process.env.GMAIL_APP_PASSWORD="unused-app-password";
   assert.equal(await registrationService.registrationMailConfigured(),false);
   configureGmail();assert.equal(await registrationService.registrationMailMode(),"live");
-  await registrationService.submitRegistration({name:"Applicant",jobTitle:"موظف",department:"الإدارة",entityId:"wamy",email:"applicant@example.com"});
+  await registrationService.submitRegistration({name:"Applicant",jobTitle:"موظف",department:"الإدارة",entityId:"wamy",projectId:projectDefinitions.DEFAULT_PROJECT.id,email:"applicant@example.com"});
   assert.ok(gmailSent.length>0);assert.equal(gmailSent[0].parsed.from.value[0].address,"hkudaish@gmail.com");assert.equal(gmailSent[0].parsed.replyTo.value[0].address,"hkudaish@gmail.com");
   assert.ok(gmailSent[0].parsed.subject.startsWith("[MProjDashboard]"));assert.equal(gmailSent[0].parsed.headers.get("x-mprojdashboard"),"application-mail");
 });
@@ -446,7 +476,7 @@ test("temporary login is restricted even through direct task, product, user and 
   const temporary = cookie(signed);
   assert.equal((await tasks.PATCH(request({ id: "task-1", status: "completed" }, temporary, "PATCH"))).status, 401);
   assert.equal((await tasks.POST(request(seed, temporary))).status, 401);
-  assert.equal((await products.POST(request({ name: "منتج" }, temporary))).status, 401);
+  assert.equal((await products.POST(request({ name: "منتج" }, temporary))).status, 403);
   assert.equal((await users.GET(request(null, temporary, "GET"))).status, 403);
   assert.equal((await legacy.POST(request({ email: "new@example.com" }, temporary))).status, 403);
 });
@@ -486,7 +516,7 @@ test("permission matrix permits editor data changes and restricts account admini
     assert.equal((await users.POST(request({ email: "forbidden@example.com", name: "ممنوع", role: "admin", password: temporaryPassword }, userCookie))).status, 403);
     if (role === "editor") data.set("tasks", { etag: "task", value: [{ ...seed, createdByEmail: email }] });
     assert.equal((await tasks.PATCH(request({ id: "task-1", status: "review" }, userCookie, "PATCH"))).status, role === "editor" ? 200 : 403);
-    assert.equal((await products.POST(request({ name: "منتج المحرر" }, userCookie))).status, role === "editor" ? 201 : 401);
+    assert.equal((await products.POST(request({ name: "منتج المحرر" }, userCookie))).status, 403);
   }
 });
 test("reset requests conceal account existence, do not change passwords, and deduplicate pending requests", async () => {

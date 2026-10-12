@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   try {
     const [account, projects] = await Promise.all([findAccount(parsed.data.email), createProjectStore().getProjects()]);
     if (!account?.active) return Response.json({ error: "الحساب غير موجود أو غير نشط. فعّل الحساب أولًا." }, { status: 400 });
-    const project = projects.find(item => item.id === parsed.data.projectId);
+    const project = projects.find(item => item.id === (account.projectId ?? parsed.data.projectId));
     if (!project) return Response.json({ error: "المشروع المحدد غير موجود." }, { status: 400 });
     const passwordMode = account.mustChangePassword ? await verifyPassword(account.loginEmail, account.passwordHash) ? "email" : "temporary" : "private";
     const mail = welcomeMail({ name: account.name, loginEmail: account.loginEmail, projectName: project.name, passwordMode, url: process.env.URL });

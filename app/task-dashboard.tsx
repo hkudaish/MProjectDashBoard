@@ -612,7 +612,7 @@ export function TaskDashboard() {
           </div>
           <div className="flex shrink-0 items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
             <DropdownMenu dir="rtl"><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-xl border-teal-100 bg-teal-50/50 text-teal-900"><Settings className="size-4" /><span>الإعدادات</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">{userSession?.authenticated && !userSession.mustChangePassword && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setActivityOpen(true)}><ListChecks className="size-4" />سجل العمليات</DropdownMenuItem>}
+              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">{userSession?.canManageUsers && <><DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus className="size-4" />إضافة مشروع</DropdownMenuItem><DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus className="size-4" />إضافة منتج</DropdownMenuItem><DropdownMenuSeparator /></>}{userSession?.authenticated && !userSession.mustChangePassword && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setActivityOpen(true)}><ListChecks className="size-4" />سجل العمليات</DropdownMenuItem>}
                 <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => setRegistrationOpen(true)}><UserPlus className="size-4" />طلب تسجيل</DropdownMenuItem>
                 {userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setRegistrationReviewOpen(true)}><ListChecks className="size-4" />طلبات التسجيل{registrationCount > 0 && <span className="ms-auto rounded-full bg-amber-100 px-2 text-xs font-bold text-amber-800">{registrationCount}</span>}</DropdownMenuItem>}
                 <DropdownMenuSeparator />
@@ -636,11 +636,11 @@ export function TaskDashboard() {
         <ProjectClock />
         <section aria-label="اختيار المشروع" className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-teal-100 bg-white p-4 shadow-sm">
           <label className="grid min-w-60 flex-1 gap-2 text-sm font-bold text-teal-900">المشروع<Select dir="rtl" value={activeProjectId} onValueChange={selectProject}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}</SelectContent></Select></label>
-          {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus />إضافة مشروع</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
+          {userSession?.canManageUsers && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
           {currentProject?.description && <p className="w-full whitespace-pre-wrap text-sm leading-6 text-slate-500">{currentProject.description}</p>}
           <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
             <div className="flex flex-wrap gap-3">{isAdmin && <>
-          {userSession?.canManageProducts && <Button className="rounded-xl bg-teal-700 hover:bg-teal-800" onClick={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus />إضافة منتج</Button>}
+          
           <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" disabled={!visibleProducts.length} onClick={() => newTask()}><Plus />إضافة مهمة</Button>
             </>}</div>
             <Button variant="outline" className="rounded-xl border-slate-200 text-slate-600" onClick={refreshTasks} disabled={refreshing}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />تحديث البيانات</Button>
@@ -693,7 +693,7 @@ export function TaskDashboard() {
 
             <section>
               <div className="mb-3"><h3 className="flex items-center gap-2 text-lg font-black text-teal-900"><Images aria-hidden="true" className="size-5 text-teal-700" />المنتجات</h3><p className="mt-1 text-sm text-slate-500">تقدم كل مسار وفق مهامه المسندة</p></div>
-              {!visibleProducts.length && <p className="rounded-2xl border border-dashed border-teal-200 bg-teal-50/40 p-6 text-sm leading-7 text-slate-600">لم تُضف منتجات لهذا المشروع بعد.{isAdmin && " ابدأ بإضافة منتج، ثم أضف مهامه."}</p>}
+              {!visibleProducts.length && <p className="rounded-2xl border border-dashed border-teal-200 bg-teal-50/40 p-6 text-sm leading-7 text-slate-600">لم تُضف منتجات لهذا المشروع بعد.{userSession?.canManageUsers && " افتح الإعدادات لإضافة منتج، ثم أضف مهامه."}</p>}
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{visibleProducts.map((product) => {
                 const productTasks = projectTasks.filter((task) => task.productId === product.id);
                 const progress = productTasks.length ? Math.round(productTasks.reduce((sum, task) => sum + task.progress, 0) / productTasks.length) : 0;

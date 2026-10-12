@@ -52,7 +52,7 @@ const request = (payload, method = "POST") => new Request("https://example.com/a
 beforeEach(() => { admin = true; role = "admin"; reads = 0; writes = 0; records.clear(); records.set("tasks", [structuredClone(seed)]); });
 test("product creation is admin-only and leaves data untouched for visitors", async () => {
   admin = false;
-  assert.equal((await products.namespace.POST(request({ name: "منتج" }))).status, 401);
+  assert.equal((await products.namespace.POST(request({ name: "منتج" }))).status, 403);
   assert.equal(reads, 0); assert.equal(writes, 0);
 });
 test("product survives subsequent reads with details and can own new tasks", async () => {

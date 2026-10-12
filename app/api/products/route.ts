@@ -1,6 +1,6 @@
 import { withActivity } from "@/lib/activity-log";
 import { normalizeProductDetails, TaskPolicyError } from "@/lib/task-assignment";
-import { getAdminSession, getSystemAdminSession, hasSameOrigin } from "@/lib/admin-auth";
+import { getSystemAdminSession, hasSameOrigin } from "@/lib/admin-auth";
 import { createProjectStore } from "@/lib/project-store";
 import { z } from "zod";
 import { DEFAULT_PROJECT_ID } from "@/lib/products";
@@ -12,8 +12,8 @@ export async function GET() {
   catch { return Response.json({ error: "تعذر تحميل المنتجات." }, { status: 500 }); }
 }
 async function handlePOST(request: Request) {
-  const session = await getAdminSession(request.headers);
-  if (!session || !["system_admin", "project_manager"].includes(session.position ?? "")) return Response.json({ error: "يجب تسجيل الدخول بحساب مسؤول." }, { status: 401 });
+  const session = await getSystemAdminSession(request.headers);
+  if (!session || !hasSameOrigin(request)) return Response.json({ error: "إضافة المنتجات متاحة لمدير النظام فقط." }, { status: 403 });
   const body = await request.json().catch(() => null);
   const parsed = productInputSchema.safeParse(body);
   if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message }, { status: 400 });

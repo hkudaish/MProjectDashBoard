@@ -21,7 +21,8 @@ async function handlePOST(request: Request) {
         await activateRegistration(id, existing.email);
         return Response.json({ user: (await listUsers()).find(user => user.email === existing.email) }, { status: 201 });
       }
-      await approvedRegistration(id, parsed.data.email, parsed.data.registrationProjectId);
+      const registration = await approvedRegistration(id, parsed.data.email, parsed.data.projectId ?? parsed.data.registrationProjectId);
+      parsed.data.projectId = registration.projectId ?? null;
     }
     const user = await createUser(parsed.data);
     let notificationWarning: string | undefined;
@@ -29,7 +30,7 @@ async function handlePOST(request: Request) {
     catch { notificationWarning = "تم إنشاء الحساب؛ سيستكمل إشعار التفعيل عند تحديث طلبات التسجيل."; }
     return Response.json({ user, notificationWarning }, { status: 201, headers: { "Cache-Control": "no-store" } });
   }
-  catch (error) { return Response.json({ error: error instanceof RegistrationError || error instanceof Error && (error.message === "يوجد حساب بهذا البريد الإلكتروني بالفعل." || HIERARCHY_ERRORS.includes(error.message)) ? error.message : "تعذر إنشاء الحساب." }, { status: 400 }); }
+  catch (error) { return Response.json({ error: error instanceof RegistrationError || error instanceof Error && (error.message === "يوجد حساب بهذا البريد الإلكتروني بالفعل." || error.message === "المشروع المحدد غير موجود." || HIERARCHY_ERRORS.includes(error.message)) ? error.message : "تعذر إنشاء الحساب." }, { status: 400 }); }
 }
 async function handlePATCH(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });
@@ -45,7 +46,7 @@ async function handlePATCH(request: Request) {
     return Response.json({ user }, { headers });
   }
   catch (error) {
-    const allowed = [...HIERARCHY_ERRORS, ...ACCOUNT_ERRORS, "الحساب غير موجود.", "لا يمكنك تعطيل حسابك أو تغيير صلاحياتك بنفسك.", "يجب الإبقاء على مسؤول نظام نشط واحد على الأقل."];
+    const allowed = [...HIERARCHY_ERRORS, ...ACCOUNT_ERRORS, "المشروع المحدد غير موجود.", "الحساب غير موجود.", "لا يمكنك تعطيل حسابك أو تغيير صلاحياتك بنفسك.", "يجب الإبقاء على مسؤول نظام نشط واحد على الأقل."];
     return Response.json({ error: error instanceof Error && allowed.includes(error.message) ? error.message : "تعذر تعديل الحساب." }, { status: 400 });
   }
 }

@@ -7,6 +7,7 @@ import { getAllAdminEmails, normalizeAdminEmail } from "./legacy-admins";
 import { createEntityStore } from "./entity-store";
 import { MANAGER_POSITIONS, POSITIONS, type Position } from "./user-types";
 import type { PublicUser } from "./user-types";
+import { createProjectStore } from "./project-store";
 
 const deriveKey = promisify(scrypt);
 const KEY = "user-accounts-v1";
@@ -16,14 +17,15 @@ export const positionSchema = z.enum(Object.keys(POSITIONS) as [Position, ...Pos
 const managerLink = emailSchema.or(z.literal("")).nullable().transform((value) => value || null);
 const reportingSelection = positionSchema;
 const entityLink = z.string().trim().max(120).nullable().transform((value) => value || null);
-export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), password: z.string().max(254).default(""), registrationRequestId: z.string().uuid().optional(), registrationProjectId: z.string().min(1).max(120).optional() }).superRefine((value, context) => {
+export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), projectId: z.string().trim().min(1).max(120).nullable().default(null), password: z.string().max(254).default(""), registrationRequestId: z.string().uuid().optional(), registrationProjectId: z.string().min(1).max(120).optional() }).superRefine((value, context) => {
   if (!value.registrationRequestId) { const parsed = passwordSchema.safeParse(value.password); if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue, path: ["password"] }); }
 }).transform(value => ({ ...value, password: value.registrationRequestId ? value.email : value.password }));
-export const updateUserSchema = z.object({ email: emailSchema, newEmail: emailSchema.optional(), name: z.string().trim().min(1).max(120).optional(), position: positionSchema.optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), managerPosition: reportingSelection.optional(), entityId: entityLink.optional(), active: z.boolean().optional(), temporaryPassword: passwordSchema.optional() }).strict().refine((value) => Object.keys(value).some((key) => key !== "email"), "اختر التعديل المطلوب.");
+export const updateUserSchema = z.object({ email: emailSchema, newEmail: emailSchema.optional(), name: z.string().trim().min(1).max(120).optional(), position: positionSchema.optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), managerPosition: reportingSelection.optional(), entityId: entityLink.optional(), projectId: z.string().trim().min(1).max(120).nullable().optional(), active: z.boolean().optional(), temporaryPassword: passwordSchema.optional() }).strict().refine((value) => Object.keys(value).some((key) => key !== "email"), "اختر التعديل المطلوب.");
 export const HIERARCHY_ERRORS = ["حدد المنصب والمسؤول المباشر.", "مدير النظام مستقل ولا يرتبط بمسؤول مباشر أو جهة.", "المسؤول المباشر غير متوافق مع الهيكل الإداري.", "لا يمكن ربط المستخدم بنفسه أو تكوين ارتباط إداري دائري.", "الجهة المحددة غير متاحة للاختيار.", "تعديل المنصب أو تعطيل المسؤول يتعارض مع ارتباطات مستخدمين تابعين له. عدّل ارتباطاتهم أولًا."];
 export const ACCOUNT_ERRORS = ["يوجد حساب بهذا البريد الإلكتروني بالفعل.", "لا يمكنك حذف حسابك الحالي.", "الحساب مرتبط بمستخدمين تابعين. عدّل ارتباطاتهم قبل الحذف."];
 const accountSchema = z.object({
   loginEmail: emailSchema.optional(), deleted: z.boolean().optional(), registrationRequestId: z.string().uuid().optional(),
+  projectId: z.string().trim().min(1).max(120).nullable().optional().transform(value => value ?? null),
   position: positionSchema.nullable().optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), entityId: entityLink.optional(),
   email: emailSchema, name: z.string(), role: z.enum(["admin", "editor", "viewer"]), active: z.boolean(),
   passwordHash: z.string().regex(/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/).or(z.literal("")),
@@ -75,7 +77,7 @@ async function registry() {
   const password = process.env.ADMIN_PASSWORD;
   if (!password || !emails.length) throw new Error("User accounts are not configured");
   const accounts = await Promise.all(emails.map(async (email): Promise<Account> => ({
-    email, loginEmail: email, name: "مدير النظام", role: "admin", position: "system_admin", managerEmail: null, additionalManagerEmail: null, entityId: null, active: true, passwordHash: await hashPassword(password),
+    email, loginEmail: email, name: "مدير النظام", role: "admin", position: "system_admin", managerEmail: null, additionalManagerEmail: null, entityId: null, projectId: null, active: true, passwordHash: await hashPassword(password),
     mustChangePassword: true, sessionVersion: 0, resetRequestedAt: null, failedAttempts: 0, lockedUntil: 0,
   })));
   await commit(accounts);
@@ -93,8 +95,8 @@ async function updateRegistry<T>(update: (accounts: Account[]) => Promise<T> | T
   throw new Error("حدث تعديل متزامن على الحسابات. حاول مرة أخرى.");
 }
 export function publicUser(account: Account): PublicUser {
-  const { email, loginEmail, name, role, position, managerEmail, additionalManagerEmail, entityId, active, mustChangePassword, resetRequestedAt } = account;
-  return { email, loginEmail, name, role, position, managerEmail, additionalManagerEmail, entityId, active, mustChangePassword, resetRequestedAt };
+  const { email, loginEmail, name, role, position, managerEmail, additionalManagerEmail, entityId, projectId, active, mustChangePassword, resetRequestedAt } = account;
+  return { email, loginEmail, name, role, position, managerEmail, additionalManagerEmail, entityId, projectId, active, mustChangePassword, resetRequestedAt };
 }
 export async function listUsers() { return (await registry()).data.filter((user) => !user.deleted).map(publicUser); }
 export async function findAccount(email: string) { return (await registry()).data.find((a) => a.email === normalizeAdminEmail(email) && !a.deleted) ?? null; }
@@ -121,8 +123,10 @@ export async function authenticateUser(email: string, password: string) {
 function roleForPosition(position: Position) { return position === "system_admin" ? "admin" as const : position === "employee" ? "viewer" as const : "editor" as const; }
 async function validateHierarchy(accounts: Account[], changedEmail: string, previous?: Account, selection?: z.infer<typeof reportingSelection>) {
   const entities = await createEntityStore().getEntities();
+  const projects = await createProjectStore().getProjects();
   for (const account of accounts) {
     if (account.deleted) continue;
+    if (account.projectId && !projects.some(project => project.id === account.projectId)) throw new Error("المشروع المحدد غير موجود.");
     if (!account.position) { if (account.email === changedEmail && account.active) throw new Error(HIERARCHY_ERRORS[0]); continue; }
     if (account.position === "system_admin") { if (account.managerEmail || account.additionalManagerEmail || account.entityId) throw new Error(HIERARCHY_ERRORS[1]); continue; }
     const isChanged = account.email === changedEmail;
@@ -154,14 +158,14 @@ export async function createUser(input: z.infer<typeof createUserSchema>) {
     // A retired login alias cannot take over a different internal identity.
     const previous = matches.length === 1 && matches[0].deleted && matches[0].email === parsed.email ? matches[0] : undefined;
     if (matches.length && !previous) throw new Error("يوجد حساب بهذا البريد الإلكتروني بالفعل.");
-    const account: Account = { email: parsed.email, loginEmail: parsed.email, name: parsed.name, role: roleForPosition(parsed.position), position: parsed.position, managerEmail: parsed.managerEmail, additionalManagerEmail: parsed.additionalManagerEmail, entityId: parsed.entityId, active: true, passwordHash, mustChangePassword: true, sessionVersion: previous ? previous.sessionVersion + 1 : 1, resetRequestedAt: null, failedAttempts: 0, lockedUntil: 0, ...(previous ? { deleted: false } : {}), ...(parsed.registrationRequestId ? { registrationRequestId: parsed.registrationRequestId } : {}) };
+    const account: Account = { email: parsed.email, loginEmail: parsed.email, name: parsed.name, role: roleForPosition(parsed.position), position: parsed.position, managerEmail: parsed.managerEmail, additionalManagerEmail: parsed.additionalManagerEmail, entityId: parsed.entityId, projectId: parsed.projectId, active: true, passwordHash, mustChangePassword: true, sessionVersion: previous ? previous.sessionVersion + 1 : 1, resetRequestedAt: null, failedAttempts: 0, lockedUntil: 0, ...(previous ? { deleted: false } : {}), ...(parsed.registrationRequestId ? { registrationRequestId: parsed.registrationRequestId } : {}) };
     if (previous) accounts[accounts.indexOf(previous)] = account;
     else accounts.push(account);
     await validateHierarchy(accounts, account.email, undefined, parsed.managerPosition);
     return publicUser(account);
   });
 }
-export async function updateUser(email: string, actorEmail: string, changes: { newEmail?: string; name?: string; position?: Position; managerEmail?: string | null; additionalManagerEmail?: string | null; managerPosition?: z.infer<typeof reportingSelection>; entityId?: string | null; active?: boolean; temporaryPassword?: string }) {
+export async function updateUser(email: string, actorEmail: string, changes: { newEmail?: string; name?: string; position?: Position; managerEmail?: string | null; additionalManagerEmail?: string | null; managerPosition?: z.infer<typeof reportingSelection>; entityId?: string | null; projectId?: string | null; active?: boolean; temporaryPassword?: string }) {
   const hash = changes.temporaryPassword ? await hashPassword(passwordSchema.parse(changes.temporaryPassword)) : null;
   return updateRegistry(async (accounts) => {
     const account = accounts.find((a) => a.email === normalizeAdminEmail(email) && !a.deleted);
@@ -176,12 +180,13 @@ export async function updateUser(email: string, actorEmail: string, changes: { n
     if (changes.managerEmail !== undefined) account.managerEmail = changes.managerEmail;
     if (changes.additionalManagerEmail !== undefined) account.additionalManagerEmail = changes.additionalManagerEmail;
     if (changes.entityId !== undefined) account.entityId = changes.entityId;
+    if (changes.projectId !== undefined) account.projectId = changes.projectId;
     if (changes.name !== undefined) account.name = changes.name;
     if (changes.active !== undefined) account.active = changes.active;
     if (!accounts.some((a) => !a.deleted && a.active && a.position === "system_admin")) throw new Error("يجب الإبقاء على مسؤول نظام نشط واحد على الأقل.");
-    if (changes.position !== undefined || changes.managerEmail !== undefined || changes.additionalManagerEmail !== undefined || changes.managerPosition !== undefined || changes.entityId !== undefined || changes.active !== undefined) await validateHierarchy(accounts, account.email, previous, changes.managerPosition);
+    if (changes.position !== undefined || changes.managerEmail !== undefined || changes.additionalManagerEmail !== undefined || changes.managerPosition !== undefined || changes.entityId !== undefined || changes.projectId !== undefined || changes.active !== undefined) await validateHierarchy(accounts, account.email, previous, changes.managerPosition);
     if (hash) { account.passwordHash = hash; account.mustChangePassword = true; account.resetRequestedAt = null; account.failedAttempts = 0; account.lockedUntil = 0; }
-    if (hash || account.loginEmail !== previous.loginEmail || account.position !== previous.position || account.managerEmail !== previous.managerEmail || account.additionalManagerEmail !== previous.additionalManagerEmail || account.entityId !== previous.entityId || account.active !== previous.active) account.sessionVersion++;
+    if (hash || account.loginEmail !== previous.loginEmail || account.position !== previous.position || account.managerEmail !== previous.managerEmail || account.additionalManagerEmail !== previous.additionalManagerEmail || account.entityId !== previous.entityId || account.projectId !== previous.projectId || account.active !== previous.active) account.sessionVersion++;
     return publicUser(account);
   });
 }
