@@ -1,5 +1,5 @@
 import { getUserSession, hasSameOrigin } from "@/lib/admin-auth";
-import { chatActionSchema, chatSendSchema, chatOverview, chatConversation, readChat, sendChat, changeChat, inspectChats, ChatError } from "@/lib/chat";
+import { chatActionSchema, chatSendSchema, chatOverview, chatConversation, readChat, sendChat, changeChat, inspectChats, sentBroadcasts, ChatError } from "@/lib/chat";
 import { z } from "zod";
 export const dynamic = "force-dynamic";
 async function session(request: Request) { const actor = await getUserSession(request.headers); return actor && !actor.mustChangePassword ? actor : null; }
@@ -9,6 +9,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     if (url.searchParams.get("supervise") === "1") return Response.json({ messages: await inspectChats(actor) }, { headers: { "Cache-Control": "no-store" } });
+    if (url.searchParams.get("broadcast") === "1") return Response.json({ ...await chatOverview(actor), messages: await sentBroadcasts(actor) }, { headers: { "Cache-Control": "no-store" } });
     const peer = url.searchParams.get("peer");
     if (peer && !z.string().email().max(254).safeParse(peer).success) return Response.json({ error: "المستخدم غير صالح." }, { status: 400 });
     return Response.json({ ...await chatOverview(actor), ...(peer ? { messages: await chatConversation(actor, peer) } : {}) }, { headers: { "Cache-Control": "no-store" } });

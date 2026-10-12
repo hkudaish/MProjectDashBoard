@@ -163,6 +163,32 @@ test("welcome notification describes email initial passwords accurately and repo
   assert.deepEqual(await accounts.findAccount("new@example.com"),original);
 });
 function chatGet(user, query="") { return chatRoute.GET(new Request(origin+"/api/chat"+query,{headers:{cookie:user}})); }
+test("system administrator appears first, broadcasts privately to active users, and receives individual replies", async () => {
+  const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob");
+  await users.POST(request({email:"inactive@example.com",name:"Inactive",position:"employee",password:temporaryPassword},admin));
+  await users.PATCH(request({email:"inactive@example.com",active:false},admin,"PATCH"));
+  const overview=await(await chatGet(a)).json();assert.equal(overview.contacts[0].position,"system_admin");assert.ok(overview.contacts.some(u=>u.email==="admin@example.com"));
+  assert.equal((await chatRoute.POST(request({recipient:"all",text:"Forged broadcast"},a))).status,403);
+  assert.equal((await chatGet(a,"?broadcast=1")).status,403);
+  const sent=await chatRoute.POST(request({recipient:"all",text:"Welcome everyone"},admin));assert.equal(sent.status,201);
+  const group=(await sent.json()).message;assert.ok(group.broadcastId);assert.equal(group.broadcastCount,4);
+  const records=data.get("chat-messages-v1").value;assert.equal(records.length,4);assert.ok(records.every(m=>m.sender==="admin@example.com"&&m.recipient!=="inactive@example.com"&&m.recipient!=="admin@example.com"));
+  assert.equal((await(await chatGet(a)).json()).unread,1);assert.equal((await(await chatGet(b)).json()).unread,1);
+  const alice=(await(await chatGet(a,"?peer=admin@example.com")).json()).messages;assert.equal(alice.length,1);assert.equal(alice[0].recipient,"alice@example.com");
+  assert.equal((await chatRoute.POST(request({recipient:"admin@example.com",text:"Alice reply"},a))).status,201);
+  assert.equal((await(await chatGet(b,"?peer=admin@example.com")).json()).messages.length,1);
+  assert.equal((await(await chatGet(admin,"?peer=alice@example.com")).json()).messages.at(-1).text,"Alice reply");
+  assert.equal((await(await chatGet(admin)).json()).unread,1);
+  assert.equal((await chatRoute.PATCH(request({id:group.id,action:"edit",text:"Updated welcome"},admin,"PATCH"))).status,200);
+  assert.equal((await(await chatGet(b,"?peer=admin@example.com")).json()).messages[0].text,"Updated welcome");
+  assert.equal((await chatRoute.PATCH(request({id:alice[0].id,action:"delete"},a,"PATCH"))).status,200);
+  assert.equal((await(await chatGet(b)).json()).unread,1);
+  assert.equal((await(await chatGet(admin,"?broadcast=1")).json()).messages.length,1);
+  assert.equal((await chatRoute.PATCH(request({id:group.id,action:"recall"},admin,"PATCH"))).status,200);
+  assert.equal((await(await chatGet(b)).json()).unread,0);
+  assert.ok((await(await chatGet(b,"?peer=admin@example.com")).json()).messages[0].recalledAt);
+  assert.ok(data.get("activity-log-v1").value.some(e=>e.action==="إرسال رسالة جماعية"));
+});
 test("chat is private to participants, counts unread messages, and requires a changed-password session", async () => {
   const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob"), c=await chatUser(admin,"carol@example.com","Carol");
   assert.equal((await chatGet("")).status,403);
