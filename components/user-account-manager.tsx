@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, Loader2, RefreshCw, Trash2, UserPlus } from "lucide-react";
+import { KeyRound, Loader2, Mail, RefreshCw, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [notifyingEmail, setNotifyingEmail] = useState("");
   const [error, setError] = useState("");
   const [draft, setDraft] = useState({ name: "", email: "", password: "", confirmation: "", position: "employee" as Position, managerEmail: null as string | null, additionalManagerEmail: null as string | null, managerPosition: undefined as ManagerPosition | undefined, entityId: null as string | null });
   const [resetEmail, setResetEmail] = useState("");
@@ -52,6 +53,16 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
     finally { setLoading(false); }
   }, [initialRegistration]);
   useEffect(() => { if (!open) return; const timer = setTimeout(() => { void load(); }, 0); return () => clearTimeout(timer); }, [open, load]);
+  async function notifyUser(user: PublicUser) {
+    setSaving(true); setNotifyingEmail(user.email); setError("");
+    try {
+      const response = await fetch("/api/auth/users/notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: user.email, projectId }) });
+      const data = await response.json() as { message?: string; error?: string };
+      if (!response.ok) throw new Error(data.error || "تعذر إرسال الإشعار.");
+      toast.success(data.message || "تم إرسال إشعار المستخدم.");
+    } catch (error) { setError(error instanceof Error ? error.message : "تعذر إرسال الإشعار."); }
+    finally { setSaving(false); setNotifyingEmail(""); }
+  }
   async function mutate(method: "POST" | "PATCH" | "DELETE", body: object) {
     setSaving(true); setError("");
     try {
@@ -83,7 +94,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
           <TableCell className="min-w-64 whitespace-normal text-xs leading-6"><HierarchyPath users={[...supervisorChain(users, user.managerEmail), user]} />{user.additionalManagerEmail && <p className="mt-2 text-red-700">تبعية إضافية قديمة؛ اختر مسؤولًا مباشرًا واحدًا لحفظ الهيكل الجديد.</p>}<p className="mt-2 text-slate-500">الجهة: {user.position === "system_admin" ? "مستقل" : entities.find((entity) => entity.id === user.entityId)?.name ?? "غير محددة"}</p></TableCell>
           <TableCell><span className={`rounded-full px-2 py-1 text-xs font-bold ${user.active ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>{user.active ? "نشط" : "معطل"}</span></TableCell>
           <TableCell className="whitespace-normal text-xs leading-6"><p>{user.mustChangePassword ? "يلزم تغيير كلمة المرور" : "كلمة مرور خاصة بالحساب"}</p>{user.resetRequestedAt && <p className="font-bold text-amber-800">طلب إعادة ضبط · {new Intl.DateTimeFormat("ar-SA", { dateStyle: "short" }).format(new Date(user.resetRequestedAt))}</p>}</TableCell>
-          <TableCell><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={saving} onClick={() => setEditingUser({ ...user, position: user.position ?? "employee" })}>تعديل المنصب والتبعية</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => { setResetEmail(user.email); setTemporaryPassword(""); setConfirmation(""); }}><KeyRound />إعادة ضبط</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => void mutate("PATCH", { email: user.email, active: !user.active })}>{user.active ? "تعطيل" : "تفعيل"}</Button><Button variant="outline" size="sm" className="text-red-700" disabled={saving || user.email === currentEmail} onClick={() => setDeletingUser(user)}><Trash2 className="size-4" />حذف الحساب</Button></div></TableCell>
+          <TableCell><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-teal-200 text-teal-800" title={user.active ? "إرسال ترحيب وشرح الدخول دون تغيير كلمة المرور الحالية" : "فعّل الحساب أولًا لإرسال الإشعار"} disabled={saving || !user.active || !projectId} onClick={() => void notifyUser(user)}>{notifyingEmail === user.email ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}إشعار المستخدم</Button><Button variant="outline" size="sm" disabled={saving} onClick={() => setEditingUser({ ...user, position: user.position ?? "employee" })}>تعديل المنصب والتبعية</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => { setResetEmail(user.email); setTemporaryPassword(""); setConfirmation(""); }}><KeyRound />إعادة ضبط</Button><Button variant="outline" size="sm" disabled={saving || user.email === currentEmail} onClick={() => void mutate("PATCH", { email: user.email, active: !user.active })}>{user.active ? "تعطيل" : "تفعيل"}</Button><Button variant="outline" size="sm" className="text-red-700" disabled={saving || user.email === currentEmail} onClick={() => setDeletingUser(user)}><Trash2 className="size-4" />حذف الحساب</Button></div></TableCell>
         </TableRow>)}</TableBody>
       </Table>}
       {editingUser && <form className="grid gap-4 rounded-2xl border border-sky-200 bg-sky-50/40 p-4" onSubmit={(event) => { event.preventDefault(); void mutate("PATCH", { email: editingUser.email, newEmail: editingUser.loginEmail, name: editingUser.name, position: editingUser.position, managerEmail: editingUser.managerEmail, additionalManagerEmail: null, managerPosition: editingUser.managerPosition, entityId: editingUser.entityId }).then((ok) => { if (ok) { setEditingUser(null); toast.success("تم تحديث بيانات المستخدم."); } }); }}>

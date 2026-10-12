@@ -1,0 +1,5 @@
+export function welcomeMail(input: { name: string; loginEmail: string; projectName: string; passwordMode: "email" | "temporary" | "private"; url?: string }) {
+  const password = input.passwordMode === "email" ? `كلمة المرور لأول دخول: نفس البريد الإلكتروني (${input.loginEmail})` : input.passwordMode === "temporary" ? "كلمة المرور لأول دخول: كلمة المرور المؤقتة المعيّنة لك. تواصل مع مدير النظام لاستلامها." : "كلمة المرور: استخدم كلمة المرور الخاصة بحسابك. إذا نسيتها، اطلب إعادة ضبطها من مدير النظام.";
+  const change = input.passwordMode === "private" ? "يمكنك تغيير كلمة المرور من الإعدادات ← تغيير كلمة المرور." : "يجب عليك تغيير كلمة المرور مباشرةً بعد أول تسجيل دخول. لن تتمكن من استخدام النظام حتى تعيين كلمة مرور جديدة.";
+  return { subject: `مرحبًا بك في ${input.projectName} — تم تسجيلك في النظام`, text: `مرحبًا ${input.name}،\nيسعدنا انضمامك إلى نظام متابعة مشروع «${input.projectName}». تم تسجيلك واعتماد حسابك، ويمكنك الآن الدخول إلى النظام.\n\nاسم المستخدم (البريد الإلكتروني): ${input.loginEmail}\n${password}\n\n${change}${input.url ? `\n\nرابط الدخول: ${input.url}` : ""}` };
+}

@@ -68,6 +68,7 @@ const registrationRoute = await exports("app/api/registration-requests/route.ts"
 const registrationService = await exports("lib/registration-requests.ts");
 const chatRoute = await exports("app/api/chat/route.ts");
 const activityRoute = await exports("app/api/activity/route.ts");
+const userNotifyRoute = await exports("app/api/auth/users/notify/route.ts");
 const originalFetch = globalThis.fetch;
 const mailboxRoute = await exports("app/api/mailbox/route.ts");
 const gmailApi = await exports("lib/gmail-api.ts");
@@ -124,6 +125,43 @@ async function chatUser(admin, email, name) {
   const first=await signIn(email,temporaryPassword);
   const changed=await password.POST(request({currentPassword:temporaryPassword,newPassword:personalPassword},cookie(first)));assert.equal(changed.status,200);return cookie(changed);
 }
+test("user welcome notification is administrator-only, sends to the saved login alias and preserves credentials", async () => {
+  const admin=await adminCookie(), employee=await chatUser(admin,"alice@example.com","Alice");
+  configureGmail();process.env.REGISTRATION_MAIL_PROVIDER="gmail";
+  await store.setJSON("projects",[{id:"notice-project",name:"مشروع الإشعار",description:""}]);
+  await users.PATCH(request({email:"alice@example.com",newEmail:"alice-login@example.com"},admin,"PATCH"));
+  const original=await accounts.findAccount("alice@example.com");
+  const input={email:"alice@example.com",projectId:"notice-project"};
+  assert.equal((await userNotifyRoute.POST(request(input))).status,403);
+  assert.equal((await userNotifyRoute.POST(request(input,employee))).status,403);
+  assert.equal((await userNotifyRoute.POST(request(input,admin,"POST","https://foreign.example"))).status,403);
+  assert.equal((await userNotifyRoute.POST(request({...input,to:"attacker@example.com"},admin))).status,400);
+  assert.equal((await userNotifyRoute.POST(request({...input,projectId:"missing"},admin))).status,400);
+  assert.equal(gmailSent.length,0);
+  assert.equal((await userNotifyRoute.POST(request(input,admin))).status,200);
+  assert.equal(gmailSent[0].parsed.to.value[0].address,"alice-login@example.com");assert.ok(gmailSent[0].parsed.subject.includes("مشروع الإشعار"));
+  assert.ok(gmailSent[0].parsed.text.includes("كلمة المرور الخاصة بحسابك"));assert.ok(!gmailSent[0].parsed.text.includes("نفس البريد الإلكتروني"));
+  assert.deepEqual(await accounts.findAccount("alice@example.com"),original);
+  assert.ok(data.get("activity-log-v1").value.some(entry=>entry.action==="إرسال إشعار ترحيبي للمستخدم"));
+  await users.PATCH(request({email:"alice@example.com",active:false},admin,"PATCH"));
+  assert.equal((await userNotifyRoute.POST(request(input,admin))).status,400);assert.equal(gmailSent.length,1);
+});
+test("welcome notification describes email initial passwords accurately and reports mail delivery failure", async () => {
+  const admin=await adminCookie();configureGmail();process.env.REGISTRATION_MAIL_PROVIDER="gmail";
+  await accounts.createUser({email:"new@example.com",name:"New user",position:"employee",entityId:"wamy",managerEmail:null,additionalManagerEmail:null,password:"IgnoredPassword123",registrationRequestId:"00000000-0000-4000-8000-000000000001"});
+  const original=await accounts.findAccount("new@example.com");
+  const input={email:"new@example.com",projectId:"media-project"};
+  // Use the persisted default project rather than trusting a client title.
+  const projects=await exports("lib/projects.ts");input.projectId=projects.DEFAULT_PROJECT.id;
+  assert.equal((await userNotifyRoute.POST(request(input,admin))).status,200);
+  assert.ok(gmailSent[0].parsed.text.includes("كلمة المرور لأول دخول: نفس البريد الإلكتروني (new@example.com)"));
+  assert.ok(gmailSent[0].parsed.text.includes("تغيير كلمة المرور مباشرةً"));assert.ok(gmailSent[0].parsed.text.includes(origin));
+  assert.deepEqual(await accounts.findAccount("new@example.com"),original);
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options)=>String(url).endsWith("/messages/send")?Response.json({error:"failed"},{status:503}):originalFetch(url,options);
+  assert.equal((await userNotifyRoute.POST(request(input,admin))).status,503);
+  assert.deepEqual(await accounts.findAccount("new@example.com"),original);
+});
 function chatGet(user, query="") { return chatRoute.GET(new Request(origin+"/api/chat"+query,{headers:{cookie:user}})); }
 test("chat is private to participants, counts unread messages, and requires a changed-password session", async () => {
   const admin=await adminCookie(), a=await chatUser(admin,"alice@example.com","Alice"), b=await chatUser(admin,"bob@example.com","Bob"), c=await chatUser(admin,"carol@example.com","Carol");
