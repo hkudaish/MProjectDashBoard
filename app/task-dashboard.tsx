@@ -781,7 +781,7 @@ export function TaskDashboard() {
       <RegistrationRequestDialog open={registrationOpen} onOpenChange={setRegistrationOpen} />
       <MailboxDialog open={mailboxOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setMailboxOpen} />
       <RegistrationReviewDialog open={registrationReviewOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setRegistrationReviewOpen} onApproved={request => { setApprovedRequest(request); setAdminManagerOpen(true); }} />
-      <UserAccountManager initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
+      <UserAccountManager projectId={activeProjectId} initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
       <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session); setIsAdmin(session.isAdmin); setAdminEmail(session.email ?? ""); }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 

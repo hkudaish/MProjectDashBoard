@@ -31,7 +31,7 @@ export function PasswordChangeDialog({ open, required, onOpenChange, onSaved, on
       <DialogHeader className="text-right sm:text-right"><DialogTitle>{required ? "تغيير كلمة المرور مطلوب" : "تغيير كلمة المرور"}</DialogTitle><DialogDescription>{required ? "لإكمال الدخول، غيّر كلمة المرور المؤقتة التي تسلمتها من مسؤول النظام. لا يمكنك استخدام صلاحيات الحساب قبل تغييرها." : "اختر كلمة مرور خاصة بك لا تقل عن 10 أحرف."}</DialogDescription></DialogHeader>
       <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
         <fieldset disabled={saving} className="grid gap-4">
-          <label className="grid gap-2 text-sm font-bold">كلمة المرور الحالية أو المؤقتة<Input type="password" autoComplete="current-password" required maxLength={128} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} /></label>
+          <label className="grid gap-2 text-sm font-bold">كلمة المرور الحالية أو المؤقتة<Input type="password" autoComplete="current-password" required maxLength={254} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} /></label>
           <label className="grid gap-2 text-sm font-bold">كلمة المرور الجديدة<Input type="password" autoComplete="new-password" required minLength={10} maxLength={128} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /></label>
           <label className="grid gap-2 text-sm font-bold">تأكيد كلمة المرور الجديدة<Input type="password" autoComplete="new-password" required minLength={10} maxLength={128} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></label>
         </fieldset>

@@ -20,7 +20,7 @@ export async function POST(request: Request) {
         await activateRegistration(id, existing.email);
         return Response.json({ user: (await listUsers()).find(user => user.email === existing.email) }, { status: 201 });
       }
-      await approvedRegistration(id, parsed.data.email);
+      await approvedRegistration(id, parsed.data.email, parsed.data.registrationProjectId);
     }
     const user = await createUser(parsed.data);
     let notificationWarning: string | undefined;

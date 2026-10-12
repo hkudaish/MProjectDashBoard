@@ -16,7 +16,9 @@ export const positionSchema = z.enum(Object.keys(POSITIONS) as [Position, ...Pos
 const managerLink = emailSchema.or(z.literal("")).nullable().transform((value) => value || null);
 const reportingSelection = positionSchema;
 const entityLink = z.string().trim().max(120).nullable().transform((value) => value || null);
-export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), password: passwordSchema }).extend({ registrationRequestId: z.string().uuid().optional() });
+export const createUserSchema = z.object({ email: emailSchema, name: z.string().trim().min(1, "أدخل اسم المستخدم.").max(120), position: positionSchema, managerEmail: managerLink.default(null), additionalManagerEmail: managerLink.default(null), managerPosition: reportingSelection.optional(), entityId: entityLink.default(null), password: z.string().max(254).default(""), registrationRequestId: z.string().uuid().optional(), registrationProjectId: z.string().min(1).max(120).optional() }).superRefine((value, context) => {
+  if (!value.registrationRequestId) { const parsed = passwordSchema.safeParse(value.password); if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue, path: ["password"] }); }
+}).transform(value => ({ ...value, password: value.registrationRequestId ? value.email : value.password }));
 export const updateUserSchema = z.object({ email: emailSchema, newEmail: emailSchema.optional(), name: z.string().trim().min(1).max(120).optional(), position: positionSchema.optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), managerPosition: reportingSelection.optional(), entityId: entityLink.optional(), active: z.boolean().optional(), temporaryPassword: passwordSchema.optional() }).strict().refine((value) => Object.keys(value).some((key) => key !== "email"), "اختر التعديل المطلوب.");
 export const HIERARCHY_ERRORS = ["حدد المنصب والمسؤول المباشر.", "مدير النظام مستقل ولا يرتبط بمسؤول مباشر أو جهة.", "المسؤول المباشر غير متوافق مع الهيكل الإداري.", "لا يمكن ربط المستخدم بنفسه أو تكوين ارتباط إداري دائري.", "الجهة المحددة غير متاحة للاختيار.", "تعديل المنصب أو تعطيل المسؤول يتعارض مع ارتباطات مستخدمين تابعين له. عدّل ارتباطاتهم أولًا."];
 export const ACCOUNT_ERRORS = ["يوجد حساب بهذا البريد الإلكتروني بالفعل.", "لا يمكنك حذف حسابك الحالي.", "الحساب مرتبط بمستخدمين تابعين. عدّل ارتباطاتهم قبل الحذف."];
@@ -59,7 +61,7 @@ export async function hashPassword(password: string) {
   return `scrypt$${salt}$${hash.toString("hex")}`;
 }
 export async function verifyPassword(password: string, encoded: string) {
-  if (password.length > 128) return false;
+  if (password.length > 254) return false;
   const [, salt, hash] = encoded.split("$");
   if (!salt || !hash) return false;
   const expected = Buffer.from(hash, "hex");

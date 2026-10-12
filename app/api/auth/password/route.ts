@@ -3,7 +3,7 @@ import { adminSessionCookie, createAdminSessionToken, getUserSession, hasSameOri
 import { changeUserPassword, passwordSchema, publicUser } from "@/lib/user-accounts";
 import { sessionInfo } from "@/lib/session-info";
 export const dynamic = "force-dynamic";
-const schema = z.object({ currentPassword: z.string().min(1).max(128), newPassword: passwordSchema });
+const schema = z.object({ currentPassword: z.string().min(1).max(254), newPassword: passwordSchema });
 export async function POST(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "الطلب غير صالح." }, { status: 403 });
   const session = await getUserSession(request.headers);

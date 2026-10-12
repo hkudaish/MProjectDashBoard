@@ -6,6 +6,7 @@ import { listUsers, findAccount, emailSchema } from "./user-accounts";
 import { gmailConfigured, sendGmailMail, gmailAddress } from "./gmail-mail";
 import type { RegistrationRequest, RegistrationStatus } from "./registration-types";
 import { createEntityStore } from "./entity-store";
+import { createProjectStore } from "./project-store";
 
 const KEY = "registration-requests-v1";
 let memory: { data: RegistrationRequest[]; etag: string } | null = null;
@@ -90,20 +91,25 @@ export async function submitRegistration(input: z.infer<typeof registrationInput
   });
   if (id) await flushRegistrationEmails(id);
 }
-export async function approvedRegistration(id: string, email: string) {
+export async function approvedRegistration(id: string, email: string, projectId?: string) {
   const request = (await snapshot())?.data.find(item => item.id === id);
   if (!request || request.status !== "approved" || request.email !== email.trim().toLowerCase()) throw new RegistrationError("الطلب غير موافق عليه أو البريد لا يطابق الطلب.");
-  return request;
+  const projects = await createProjectStore().getProjects();
+  const project = projects.find(item => item.id === (projectId ?? request.projectId)) ?? (!projectId && !request.projectId ? projects[0] : undefined);
+  if (!project) throw new RegistrationError("المشروع المحدد غير موجود.");
+  return update(items => { const saved = items.find(item => item.id === id); if (!saved || saved.status !== "approved") throw new RegistrationError("الطلب غير موافق عليه."); saved.projectId = project.id; saved.projectName = project.name; return saved; });
 }
 export async function activateRegistration(id: string, email: string) {
   const account = await findAccount(email);
   if (!account?.active || account.registrationRequestId !== id) throw new RegistrationError("لم يكتمل اعتماد حساب هذا الطلب.");
+  const projects = await createProjectStore().getProjects();
   await update(items => {
     const request = items.find(item => item.id === id);
     if (!request || request.email !== account.loginEmail) throw new RegistrationError("الطلب غير موجود.");
     if (request.status === "activated") return;
     request.status = "activated"; request.updatedAt = new Date().toISOString();
-    notify(request, request.email, "تم تفعيل حسابك", `مرحبًا ${request.name}،\nاكتمل اعتماد حسابك وتفعيله في التطبيق.\nبريد الدخول: ${account.loginEmail}\nتواصل مع مدير النظام لاستلام كلمة المرور المؤقتة، ثم غيّرها عند أول تسجيل دخول.${process.env.URL ? `\nرابط التطبيق: ${process.env.URL}` : ""}`);
+    const projectName = request.projectName || projects[0]?.name || "المشروع الإعلامي";
+    notify(request, request.email, `مرحبًا بك في ${projectName} — تم تفعيل حسابك`, `مرحبًا ${request.name}،\nيسعدنا انضمامك إلى نظام متابعة مشروع «${projectName}». تم تسجيلك واعتماد حسابك، ويمكنك الآن الدخول إلى النظام.\n\nاسم المستخدم (البريد الإلكتروني): ${account.loginEmail}\nكلمة المرور لأول دخول: نفس البريد الإلكتروني (${account.loginEmail})\n\nيجب عليك تغيير كلمة المرور مباشرةً بعد أول تسجيل دخول. لن تتمكن من استخدام النظام حتى تعيين كلمة مرور جديدة.${process.env.URL ? `\n\nرابط الدخول: ${process.env.URL}` : ""}`);
   });
   await flushRegistrationEmails(id);
 }

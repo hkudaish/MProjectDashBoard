@@ -162,7 +162,8 @@ test("approved registration provisions once, sends separate approval and activat
   process.env.RESEND_API_KEY="test-key";process.env.REGISTRATION_MAIL_FROM="noreply@example.com";
   assert.equal((await registrationRoute.POST(request(input))).status,201);
   const row=(await(await registrationRoute.GET(request(null,admin,"GET"))).json()).requests[0];
-  const accountInput={name:input.name,email:input.email,position:"project_manager",entityId:"wamy",password:temporaryPassword,registrationRequestId:row.id};
+  await store.setJSON("projects",[{id:"welcome-project",name:"مشروع الترحيب",description:""}]);
+  const accountInput={name:input.name,email:input.email,position:"project_manager",entityId:"wamy",password:temporaryPassword,registrationRequestId:row.id,registrationProjectId:"welcome-project"};
   assert.equal((await users.POST(request(accountInput,admin))).status,400);
   assert.equal((await registrationRoute.PATCH(request({id:row.id,status:"approved"},admin,"PATCH"))).status,200);
   assert.ok(sent.some(item=>item.body.to[0]===input.email&&item.body.subject==="الموافقة على طلب تسجيلك"));
@@ -170,12 +171,18 @@ test("approved registration provisions once, sends separate approval and activat
   assert.equal((await users.POST(request(accountInput,admin))).status,201);
   const first=await accounts.findAccount(input.email);assert.equal(first.registrationRequestId,row.id);
   assert.equal(first.mustChangePassword,true);assert.equal(first.active,true);
-  assert.equal((await signIn(input.email,temporaryPassword)).status,200);
+  const firstLogin=await signIn(input.email,input.email);assert.equal(firstLogin.status,200);
+  const firstSession=await firstLogin.clone().json();assert.equal(firstSession.mustChangePassword,true);assert.equal(firstSession.canManageUsers,false);
+  assert.ok([401,403].includes((await tasks.PATCH(request({id:seed.id,status:"completed"},cookie(firstLogin),"PATCH"))).status));
+  const changed=await password.POST(request({currentPassword:input.email,newPassword:personalPassword},cookie(firstLogin)));assert.equal(changed.status,200);
+  assert.equal((await signIn(input.email,input.email)).status,401);
+  assert.equal((await signIn(input.email,personalPassword)).status,200);
   const activated=(await(await registrationRoute.GET(request(null,admin,"GET"))).json()).requests[0];assert.equal(activated.status,"activated");
-  assert.ok(sent.some(item=>item.body.to[0]===input.email&&item.body.subject==="تم تفعيل حسابك"));
+  const welcome=sent.find(item=>item.body.to[0]===input.email&&item.body.subject.includes("تم تفعيل حسابك"));
+  assert.ok(welcome.body.subject.includes("مشروع الترحيب"));assert.ok(welcome.body.text.includes(`كلمة المرور لأول دخول: نفس البريد الإلكتروني (${input.email})`));assert.ok(welcome.body.text.includes("تغيير كلمة المرور مباشرةً"));assert.ok(welcome.body.text.includes(origin));
   assert.ok(sent.every(item=>!item.body.text.includes(temporaryPassword)));
   const beforeReplay=sent.length;assert.equal((await users.POST(request(accountInput,admin))).status,201);
-  assert.equal(sent.length,beforeReplay);assert.equal((await accounts.findAccount(input.email)).passwordHash,first.passwordHash);
+  assert.equal(sent.length,beforeReplay);assert.equal(await accounts.verifyPassword(personalPassword,(await accounts.findAccount(input.email)).passwordHash),true);
   assert.equal(new Set(sent.map(item=>item.key)).size,sent.length);
 });
 test("registration hold and rejection notify the applicant, and failed delivery can be retried", async () => {
@@ -202,7 +209,7 @@ test("registration activation recovers after account creation is interrupted", a
   await registrationService.reviewRegistration({id:row.id,status:"approved",note:""},"admin@example.com");
   await accounts.createUser({name:input.name,email:input.email,position:"project_manager",managerEmail:null,additionalManagerEmail:null,entityId:null,password:temporaryPassword,registrationRequestId:row.id});
   assert.equal((await registrationService.listRegistrations())[0].status,"activated");
-  assert.equal((await registrationService.listRegistrations())[0].notifications.filter(item=>item.subject==="تم تفعيل حسابك").length,1);
+  assert.equal((await registrationService.listRegistrations())[0].notifications.filter(item=>item.subject.includes("تم تفعيل حسابك")).length,1);
 });
 
 test("Gmail notifications use HTTPS and MIME from the configured Google account", async () => {

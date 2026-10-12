@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   if (!hasSameOrigin(request)) return Response.json({ error: "طلب تسجيل الدخول غير صالح." }, { status: 403 });
   if (!canAdminLogin()) return Response.json({ error: "لم يتم إعداد الدخول بعد." }, { status: 503 });
-  const parsed = z.object({ email: z.string().max(254), password: z.string().max(128) }).safeParse(await request.json().catch(() => null));
+  const parsed = z.object({ email: z.string().max(254), password: z.string().max(254) }).safeParse(await request.json().catch(() => null));
   if (!parsed.success)
     return Response.json({ error: "بيانات الدخول غير صحيحة." }, { status: 400 });
   try {

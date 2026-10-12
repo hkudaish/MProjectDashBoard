@@ -14,7 +14,7 @@ import { UserHierarchyFields, type ManagerPosition } from "@/components/user-hie
 import { POSITIONS, type Entity, type Position, type PublicUser } from "@/lib/user-types";
 import type { RegistrationRequest } from "@/lib/registration-types";
 
-export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged, initialRegistration }: { open: boolean; onOpenChange: (open: boolean) => void; currentEmail: string; onChanged: () => void; initialRegistration?: RegistrationRequest | null }) {
+export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged, initialRegistration, projectId }: { open: boolean; onOpenChange: (open: boolean) => void; currentEmail: string; onChanged: () => void; initialRegistration?: RegistrationRequest | null; projectId?: string }) {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [editingUser, setEditingUser] = useState<(PublicUser & { position: Position; managerPosition?: ManagerPosition }) | null>(null);
   const [deletingUser, setDeletingUser] = useState<PublicUser | null>(null);
@@ -31,7 +31,7 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
     if (!open || !initialRegistration) return;
     const timer = setTimeout(() => {
       const position = (Object.entries(POSITIONS).find(([, label]) => label === initialRegistration.jobTitle)?.[0] ?? "employee") as Position;
-      setDraft({ name: initialRegistration.name, email: initialRegistration.email, password: "", confirmation: "", position, managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: initialRegistration.entityId ?? null });
+      setDraft({ name: initialRegistration.name, email: initialRegistration.email, password: initialRegistration.email, confirmation: initialRegistration.email, position, managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: initialRegistration.entityId ?? null });
       setRegistrationRequestId(initialRegistration.id);
     }, 0);
     return () => clearTimeout(timer);
@@ -97,15 +97,15 @@ export function UserAccountManager({ open, onOpenChange, currentEmail, onChanged
         <p className="text-xs leading-6 text-amber-900">سيُلزم المستخدم بتغيير هذه الكلمة عند أول دخول بعد إعادة الضبط.</p>
         <div className="flex gap-2"><Button disabled={saving} type="submit">تعيين كلمة مؤقتة</Button><Button variant="outline" type="button" disabled={saving} onClick={() => { setResetEmail(""); setTemporaryPassword(""); setConfirmation(""); }}>إلغاء</Button></div>
       </form>}
-      <form onSubmit={(event) => { event.preventDefault(); if (draft.password !== draft.confirmation) { setError("كلمتا المرور غير متطابقتين."); return; } void mutate("POST", { ...draft, registrationRequestId }).then((ok) => { if (ok) { setDraft({ name: "", email: "", password: "", confirmation: "", position: "employee", managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: null }); toast.success("تم إنشاء الحساب. سلّم كلمة المرور المؤقتة لصاحب الحساب."); } }); }} className="grid gap-4 rounded-2xl border border-teal-200 bg-teal-50/40 p-4">
-        <h3 className="font-black text-teal-900">إنشاء حساب مستخدم</h3>
+      <form onSubmit={(event) => { event.preventDefault(); if (draft.password !== draft.confirmation) { setError("كلمتا المرور غير متطابقتين."); return; } void mutate("POST", { ...draft, registrationRequestId, registrationProjectId: registrationRequestId ? projectId : undefined }).then((ok) => { if (ok) { setDraft({ name: "", email: "", password: "", confirmation: "", position: "employee", managerEmail: null, additionalManagerEmail: null, managerPosition: undefined, entityId: null }); toast.success(registrationRequestId ? "تم اعتماد الحساب وإعداد رسالة الترحيب ببيانات أول دخول." : "تم إنشاء الحساب. سلّم كلمة المرور المؤقتة لصاحب الحساب."); } }); }} className="grid gap-4 rounded-2xl border border-teal-200 bg-teal-50/40 p-4">
+        <h3 className="font-black text-teal-900">إنشاء حساب مستخدم</h3>{registrationRequestId && <p className="text-sm leading-7 text-teal-900">سيُرسل بريد ترحيبي باسم المشروع الحالي. اسم المستخدم وكلمة المرور لأول دخول هما البريد الإلكتروني، ويُلزم المستخدم بتغيير كلمة المرور مباشرةً.</p>}
         <p className="text-xs leading-6 text-teal-800">لإعادة حساب محذوف، أضفه ببريده السابق وكلمة مرور مؤقتة جديدة. يُستعاد الحساب وسجل مهامه مع تطبيق المنصب والتبعية المحددين هنا.</p>
         <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
           {registrationRequestId && initialRegistration && <><label className="grid gap-2 text-sm font-bold">المسمى الوظيفي في الطلب<Input readOnly value={initialRegistration.jobTitle} /></label><label className="grid gap-2 text-sm font-bold">الإدارة في الطلب<Input readOnly value={initialRegistration.department} /></label></>}
           <label className="grid gap-2 text-sm font-bold">اسم المستخدم<Input required maxLength={120} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
           <label className="grid gap-2 text-sm font-bold">البريد الإلكتروني<Input type="email" dir="ltr" autoComplete="off" readOnly={Boolean(registrationRequestId)} required maxLength={254} value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></label>
-          <label className="grid gap-2 text-sm font-bold">كلمة المرور المؤقتة<Input type="password" autoComplete="new-password" minLength={10} maxLength={128} required value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} /></label>
-          <label className="grid gap-2 text-sm font-bold">تأكيد كلمة المرور<Input type="password" autoComplete="new-password" minLength={10} maxLength={128} required value={draft.confirmation} onChange={(e) => setDraft({ ...draft, confirmation: e.target.value })} /></label>
+          <label className="grid gap-2 text-sm font-bold">كلمة المرور المؤقتة<Input type="password" autoComplete="new-password" minLength={registrationRequestId ? undefined : 10} maxLength={254} required readOnly={Boolean(registrationRequestId)} value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} /></label>
+          <label className="grid gap-2 text-sm font-bold">تأكيد كلمة المرور<Input type="password" autoComplete="new-password" minLength={registrationRequestId ? undefined : 10} maxLength={254} required readOnly={Boolean(registrationRequestId)} value={draft.confirmation} onChange={(e) => setDraft({ ...draft, confirmation: e.target.value })} /></label>
           <UserHierarchyFields value={draft} onChange={(links) => setDraft({ ...draft, ...links })} users={users} entities={entities} disabled={saving} />
         </fieldset>
         <p className="text-xs leading-6 text-slate-600">اختر المنصب. التبعية الإدارية اختيارية؛ يمكنك اختيار المسؤول من الحسابات المسجلة أو ربطه لاحقًا. الأمين العام أعلى الهيكل، ومدير النظام خارجه. كلمة المرور لا تقل عن 10 أحرف.</p>
