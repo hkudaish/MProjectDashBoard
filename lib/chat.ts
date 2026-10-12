@@ -35,7 +35,7 @@ export async function sendChat(actor: UserSession, input: z.infer<typeof chatSen
   const createdAt = new Date().toISOString();
   const copies: ChatMessage[] = recipients.map(u => ({ id: randomUUID(), sender: actor.email, recipient: u.email, text: parsed.text, createdAt, editedAt: null, readAt: null, recalledAt: null, removedAt: null, deletedFor: [], ...(broadcastId ? { broadcastId } : {}) }));
   await updateRecord<ChatMessage[], void>(KEY, [], messages => { messages.push(...copies); });
-  await recordActivity(actor, broadcast ? "إرسال رسالة جماعية" : "إرسال رسالة", "المحادثات"); return { ...copies[0], ...(broadcast ? { broadcastCount: copies.length } : {}) };
+  await recordActivity(actor, broadcast ? "إرسال رسالة جماعية" : "إرسال رسالة", "المحادثات", { targetId: broadcastId || copies[0].id, details: [`المستلمون (${recipients.length}): ${recipients.map(user => user.name).join("، ")}`, "تم إرسال رسالة نصية؛ يُعرض محتواها داخل المحادثة"] }); return { ...copies[0], ...(broadcast ? { broadcastCount: copies.length } : {}) };
 }
 export async function sentBroadcasts(actor: UserSession) {
   if (actor.position !== "system_admin") throw new ChatError("الإرسال الجماعي متاح لمدير النظام فقط.", 403);
@@ -60,6 +60,6 @@ export async function changeChat(actor: UserSession, input: z.infer<typeof chatA
     else { for (const copy of copies) { copy.text = ""; copy.recalledAt = new Date().toISOString(); } }
   });
   const names = { edit: "تعديل رسالة", recall: "التراجع عن إرسال رسالة", delete: "حذف رسالة لدي", remove: "حذف رسالة بواسطة مدير النظام" };
-  await recordActivity(actor, names[parsed.action], "المحادثات");
+  await recordActivity(actor, names[parsed.action], "المحادثات", { targetId: parsed.id, details: [`معرّف الرسالة: ${parsed.id}`, parsed.action === "remove" ? "حذف الرسالة لجميع المشاركين" : parsed.action === "delete" ? "إخفاء الرسالة من حساب المستخدم فقط" : names[parsed.action]] });
 }
 export async function inspectChats(actor: UserSession) { if (actor.position !== "system_admin") throw new ChatError("الإشراف متاح لمدير النظام فقط.", 403); return (await readRecord<ChatMessage[]>(KEY, [])).slice().reverse(); }

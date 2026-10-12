@@ -90,6 +90,58 @@ function request(body, cookie = "", method = "POST", suppliedOrigin = origin) {
   return new Request(`${origin}/api`, { method, headers: { "Content-Type": "application/json", ...(cookie ? { cookie } : {}), ...(suppliedOrigin ? { origin: suppliedOrigin } : {}) }, ...(method === "GET" ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) });
 }
 function cookie(response) { return response.headers.get("set-cookie").split(";")[0]; }
+function resourceRequest(path, body, token, method) {
+  return new Request(`${origin}/api/${path}`, { method, headers: { "Content-Type": "application/json", origin, ...(token ? { cookie: token } : {}) }, body: JSON.stringify(body) });
+}
+test("audit records identify task titles, changed fields and deleted records without logging failed actions", async () => {
+  const admin = await adminCookie();
+  await store.setJSON("tasks", [{ ...seed, title: "مهمة التقرير", details: [] }]);
+  assert.equal((await tasks.PATCH(resourceRequest("tasks", { id: seed.id, title: "تقرير الإنجاز", status: "in_progress", progress: 50 }, admin, "PATCH"))).status, 200);
+  const modified = data.get("activity-log-v1").value.at(-1);
+  assert.equal(modified.actorEmail, "admin@example.com");
+  assert.equal(modified.resource, "المهام: تقرير الإنجاز");
+  assert.equal(modified.targetId, seed.id);
+  assert.ok(modified.details.some(value => value.includes("مهمة التقرير") && value.includes("تقرير الإنجاز")));
+  assert.ok(modified.details.some(value => value.includes("لم يبدأ") && value.includes("قيد التنفيذ")));
+  assert.ok(modified.details.some(value => value.includes("50%")));
+  const count = data.get("activity-log-v1").value.length;
+  assert.equal((await tasks.PATCH(resourceRequest("tasks", { id: seed.id, status: "completed" }, "", "PATCH"))).status, 403);
+  assert.equal(data.get("activity-log-v1").value.length, count);
+  assert.equal((await tasks.DELETE(resourceRequest("tasks", { id: seed.id }, admin, "DELETE"))).status, 200);
+  const removed = data.get("activity-log-v1").value.at(-1);
+  assert.equal(removed.resource, "المهام: تقرير الإنجاز");
+  assert.ok(removed.details.includes("حذف السجل: تقرير الإنجاز"));
+});
+test("audit describes account events while omitting passwords and preserving old log entries", async () => {
+  const admin = await adminCookie();
+  const input = { email: "audit-user@example.com", name: "مستخدم المراجعة", position: "employee", entityId: "wamy", password: temporaryPassword };
+  assert.equal((await users.POST(resourceRequest("auth/users", input, admin, "POST"))).status, 201);
+  const created = data.get("activity-log-v1").value.at(-1);
+  assert.ok(created.resource.includes(input.name));
+  assert.ok(created.details.some(value => value.includes("الموظف")));
+  assert.ok(created.details.some(value => value.includes("الندوة العالمية")));
+  assert.equal((await users.PATCH(resourceRequest("auth/users", { email: input.email, temporaryPassword: "NewPrivateSecret123" }, admin, "PATCH"))).status, 200);
+  assert.equal(data.get("activity-log-v1").value.at(-1).action, "إعادة ضبط كلمة مرور المستخدم");
+  assert.equal((await users.PATCH(resourceRequest("auth/users", { email: input.email, active: false }, admin, "PATCH"))).status, 200);
+  assert.equal(data.get("activity-log-v1").value.at(-1).action, "تعطيل حساب المستخدم");
+  const serialized = JSON.stringify(data.get("activity-log-v1").value);
+  for (const secret of [temporaryPassword, "NewPrivateSecret123", oldPassword, personalPassword, "passwordHash"]) assert.ok(!serialized.includes(secret));
+  const old = { id: "legacy-entry", actorEmail: "admin@example.com", actorName: "Admin", resource: "المهام", action: "تعديل", createdAt: "2026-10-01T00:00:00Z" };
+  data.get("activity-log-v1").value.push(old);
+  const listed = await (await activityRoute.GET(request(null, admin, "GET"))).json();
+  assert.deepEqual(listed.entries.find(entry => entry.id === old.id), old);
+});
+test("audit includes changes inside detail rows and the project names involved", async () => {
+  const admin = await adminCookie();
+  const oldDetail = { id: "detail-1", description: "التقرير الأول", status: "not_started", completionDate: "", ownerType: "unassigned", assignee: "" };
+  await store.setJSON("tasks", [{ ...seed, details: [oldDetail] }]);
+  assert.equal((await tasks.PATCH(resourceRequest("tasks", { id: seed.id, details: [{ ...oldDetail, status: "completed", completionDate: "2026-10-12" }] }, admin, "PATCH"))).status, 200);
+  const entry = data.get("activity-log-v1").value.at(-1);
+  assert.ok(entry.details.some(value => value.includes("التقرير الأول") && value.includes("مكتمل")));
+  assert.ok(entry.details.some(value => value.includes("2026-10-12")));
+  assert.equal((await projects.POST(resourceRequest("projects", { name: "مشروع السجل", description: "وصف المشروع" }, admin, "POST"))).status, 201);
+  assert.equal(data.get("activity-log-v1").value.at(-1).resource, "المشاريع: مشروع السجل");
+});
 async function signIn(email, value) { return login.POST(request({ email, password: value })); }
 async function adminCookie() {
   const first = await signIn("admin@example.com", oldPassword); assert.equal(first.status, 200);

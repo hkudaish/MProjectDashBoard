@@ -9,5 +9,11 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   const actor = await getSystemAdminSession(request.headers); if (!actor || !hasSameOrigin(request)) return Response.json({ error: "حذف السجل متاح لمدير النظام فقط." }, { status: 403 });
   const parsed = z.object({ id: z.string().uuid().optional() }).strict().safeParse(await request.json().catch(() => null)); if (!parsed.success) return Response.json({ error: "بيانات الحذف غير صالحة." }, { status: 400 });
-  try { await deleteActivity(parsed.data.id); await recordActivity(actor, parsed.data.id ? "حذف عملية من السجل" : "مسح سجل العمليات", "سجل العمليات"); return Response.json({ ok: true }); } catch { return Response.json({ error: "تعذر حذف السجل." }, { status: 503 }); }
+  try {
+    const entries = await listActivity(actor.email, true);
+    const target = entries.find(entry => entry.id === parsed.data.id);
+    await deleteActivity(parsed.data.id);
+    await recordActivity(actor, parsed.data.id ? "حذف عملية من السجل" : "مسح سجل العمليات", "سجل العمليات", { ...(parsed.data.id ? { targetId: parsed.data.id } : {}), details: parsed.data.id ? [target ? `${target.action} — ${target.resource} — المستخدم: ${target.actorName}` : `معرّف العملية: ${parsed.data.id}`] : [`تم مسح ${entries.length} عملية مسجلة`] });
+    return Response.json({ ok: true });
+  } catch { return Response.json({ error: "تعذر حذف السجل." }, { status: 503 }); }
 }

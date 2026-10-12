@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       const response = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: process.env.REGISTRATION_MAIL_FROM, to: [account.loginEmail], ...mail }), signal: AbortSignal.timeout(15000) });
       if (!response.ok) throw new Error("Mail delivery failed");
     }
-    await recordActivity(actor, "إرسال إشعار ترحيبي للمستخدم", `المستخدمون: ${account.name} (${account.loginEmail})`);
+    await recordActivity(actor, "إرسال إشعار ترحيبي للمستخدم", `المستخدمون: ${account.name} (${account.loginEmail})`, { targetId: account.email, details: [`المشروع: ${project.name}`, `البريد المستلم: ${account.loginEmail}`, "إرسال ترحيب وشرح آلية الدخول إلى النظام"] });
     return Response.json({ message: "تم إرسال الرسالة الترحيبية إلى بريد المستخدم." }, { headers: { "Cache-Control": "no-store" } });
   } catch { return Response.json({ error: "تعذر إرسال الإشعار. تحقق من ربط البريد ثم حاول مجددًا." }, { status: 503 }); }
 }
