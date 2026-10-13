@@ -592,6 +592,7 @@ export function TaskDashboard() {
           <div className="flex min-w-0 flex-wrap items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
             <UserGreeting name={userSession?.authenticated ? userSession.name : null} />
 
+            {userSession?.authenticated && userSession.position === "system_admin" && <Button asChild variant="outline" className="rounded-xl border-teal-100 text-teal-900"><Link href={`/settings/account?project=${encodeURIComponent(activeProjectId)}`}><Settings className="size-4" />الإعدادات</Link></Button>}
             <Button variant="outline" className="rounded-xl border-slate-200 bg-white" disabled={authLoading} onClick={() => { if (userSession?.authenticated) void logoutAdmin(); else { setLoginOpen(true); } }}>{userSession?.authenticated ? <LogOut className="size-4" /> : <LogIn className="size-4" />}<span>{userSession?.authenticated ? "تسجيل الخروج" : "تسجيل الدخول"}</span></Button>
           </div>
         </div>
