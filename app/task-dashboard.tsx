@@ -1,8 +1,9 @@
 "use client";
-import { PermissionsDialog } from "@/components/permissions-dialog";
 import { permitted, type Resource, type PermissionAction } from "@/lib/permissions";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { UserGreeting } from "@/components/user-greeting";
 import { ChatPanel } from "@/components/chat-panel";
-import { ActivityDialog } from "@/components/activity-dialog";
 
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,18 +25,13 @@ import {
   Loader2,
   Pencil,
   Plus,
-  KeyRound,
-  Building2,
   RefreshCw,
   Search,
   Settings,
   Sparkles,
-  UserPlus,
-  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ProjectClock } from "@/components/project-clock";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -47,15 +43,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
-import { EntityManager } from "@/components/entity-manager";
 import { TaskAssigneeSelect } from "@/components/task-assignee-select";
-import { UserAccountManager } from "@/components/user-account-manager";
-import { MailboxDialog } from "@/components/mailbox-dialog";
-import { RegistrationRequestDialog, RegistrationReviewDialog, useRegistrationCount } from "@/components/registration-dialogs";
-import type { RegistrationRequest } from "@/lib/registration-types";
 import { PasswordChangeDialog, PasswordResetRequestDialog } from "@/components/password-dialogs";
 import { DEFAULT_PROJECT, projectInputSchema } from "@/lib/projects";
-import { POSITIONS, type Entity, type PublicUser, type SessionInfo } from "@/lib/user-types";
+import { type Entity, type PublicUser, type SessionInfo } from "@/lib/user-types";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
 import { TaskDetailsReport } from "@/components/task-details-report";
 import { DEFAULT_PRODUCTS, DEFAULT_PROJECT_ID, productInputSchema, taskInputSchema } from "@/lib/products";
@@ -64,7 +55,7 @@ import { progressForStatus } from "@/lib/task-progress";
 import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus, type Product, type Project } from "@/lib/types";
 
-import { taskUndo, type TaskPatch, type TaskUndo } from "@/lib/task-undo";
+import { taskUndo, rememberTaskUndo, recallTaskUndo, clearTaskUndo, type TaskPatch, type TaskUndo } from "@/lib/task-undo";
 
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
 
@@ -206,10 +197,10 @@ function LoadingView() {
 }
 
 export function TaskDashboard() {
+  const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [assignmentUsers, setAssignmentUsers] = useState<PublicUser[]>([]);
-  const [entitiesOpen, setEntitiesOpen] = useState(false);
   const [products, setProducts] = useState<Product[]>(DEFAULT_PRODUCTS);
   const [projects, setProjects] = useState<Project[]>([DEFAULT_PROJECT]);
   const [activeProjectId, setActiveProjectId] = useState(DEFAULT_PROJECT_ID);
@@ -221,7 +212,6 @@ export function TaskDashboard() {
   const [productDraft, setProductDraft] = useState<Omit<Product, "id"> | null>(null);
   const [productSaving, setProductSaving] = useState(false);
   const [viewingProduct, setViewingProduct] = useState<Product | null>(null);
-  const [adminEmail, setAdminEmail] = useState("");
   const [authConfigured, setAuthConfigured] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
@@ -229,24 +219,13 @@ export function TaskDashboard() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
-  const [adminManagerOpen, setAdminManagerOpen] = useState(false);
-  const [registrationOpen, setRegistrationOpen] = useState(false);
-  const [registrationReviewOpen, setRegistrationReviewOpen] = useState(false);
-  const [permissionsOpen, setPermissionsOpen] = useState(false);
-  const [permissionEmail, setPermissionEmail] = useState<string | undefined>();
-  const [activityOpen, setActivityOpen] = useState(false);
-  const [mailboxOpen, setMailboxOpen] = useState(false);
-  const [approvedRequest, setApprovedRequest] = useState<RegistrationRequest | null>(null);
   const [userSession, setUserSession] = useState<SessionInfo | null>(null);
   const canResource = (resource: Resource, action: PermissionAction) => permitted(userSession, resource, action);
-  const registrationCount = useRegistrationCount(Boolean(userSession?.canManageUsers));
   useEffect(() => {
-    if (!userSession?.canManageUsers) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("mailbox") !== "1" && !params.has("gmail")) return;
-    const timer = setTimeout(() => setMailboxOpen(true), 0);
-    return () => clearTimeout(timer);
-  }, [userSession?.canManageUsers]);
+    router.replace("/settings/mail" + (params.has("gmail") ? "?gmail=" + encodeURIComponent(params.get("gmail")!) : ""));
+  }, [router]);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [resetRequestOpen, setResetRequestOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -264,6 +243,8 @@ export function TaskDashboard() {
   const [undoingTask, setUndoingTask] = useState(false);
   const [detailEditorVersion, setDetailEditorVersion] = useState(0);
   const tasksRef = useRef<Task[]>([]);
+  const taskIdentity = useRef<string | null>(null);
+  useEffect(() => { taskIdentity.current = userSession?.authenticated ? userSession.email : null; const timer = setTimeout(() => setLastTaskChange(recallTaskUndo(taskIdentity.current)), 0); return () => clearTimeout(timer); }, [userSession?.authenticated, userSession?.email]);
 
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
 
@@ -282,6 +263,9 @@ export function TaskDashboard() {
       setRefreshing(false);
     }
   }, []);
+
+  useEffect(() => { const id = new URLSearchParams(window.location.search).get("project"); if (!id || !projects.some(project => project.id === id)) return; const timer = setTimeout(() => setActiveProjectId(id), 0); return () => clearTimeout(timer); }, [projects]);
+  useEffect(() => { const params = new URLSearchParams(window.location.search); if (params.get("login") !== "1") return; const timer = setTimeout(() => setLoginOpen(true), 0); return () => clearTimeout(timer); }, []);
 
   const refreshTasks = useCallback(() => {
     setRefreshing(true);
@@ -307,10 +291,10 @@ export function TaskDashboard() {
       if (!response.ok) throw new Error("تعذر التحقق من صلاحيات الدخول.");
       if (!current) return;
       setUserSession(data);
-      setLastTaskChange(null);
+
       setAuthConfigured(Boolean(data.configured));
 
-      setAdminEmail(data.email ?? "");
+
     }).catch(() => {
       if (current) setAuthConfigured(false);
     }).finally(() => {
@@ -334,17 +318,12 @@ export function TaskDashboard() {
     return labels;
   }, [entities]);
   const OWNER_OPTIONS = Object.entries(ownerLabels);
-  useEffect(() => { if (!userSession?.authenticated) return; let cancelled = false; const timer = setInterval(() => { if (document.visibilityState !== "visible") return; void fetch("/api/auth/session", { cache: "no-store" }).then(response => response.json() as Promise<SessionInfo>).then(next => { if (!cancelled && JSON.stringify(next) !== JSON.stringify(userSession)) { setUserSession(next);  setAdminEmail(next.email ?? ""); void loadTasks(); } }).catch(() => undefined); }, 12000); return () => { cancelled = true; clearInterval(timer); }; }, [userSession, loadTasks]);
+  useEffect(() => { if (!userSession?.authenticated) return; let cancelled = false; const timer = setInterval(() => { if (document.visibilityState !== "visible") return; void fetch("/api/auth/session", { cache: "no-store" }).then(response => response.json() as Promise<SessionInfo>).then(next => { if (!cancelled && JSON.stringify(next) !== JSON.stringify(userSession)) { setUserSession(next);   void loadTasks(); } }).catch(() => undefined); }, 12000); return () => { cancelled = true; clearInterval(timer); }; }, [userSession, loadTasks]);
   function taskCanEdit(task: Task | null | undefined) { return Boolean(task && (task.permissions?.canEdit ?? userSession?.position === "system_admin")); }
   const canEditMain = creatingTask || draft?.permissions?.canEditMain === true || userSession?.position === "system_admin";
   const canUpdateMain = creatingTask || draft?.permissions?.canUpdateMain === true || userSession?.position === "system_admin";
   const canAssign = creatingTask || draft?.permissions?.canAssign === true || userSession?.position === "system_admin";
   async function deleteRecord(resource: Resource, id: string) { if (!window.confirm("حذف هذا السجل نهائيًا؟ تتوقف العملية إذا كان مرتبطًا ببيانات أخرى.")) return; try { const response = await fetch(`/api/${resource}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); const data = await response.json() as { error?: string }; if (!response.ok) throw new Error(data.error || "تعذر الحذف."); toast.success("تم حذف السجل."); refreshTasks(); return true; } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر الحذف."); return false; } }
-  function refreshAdministration() {
-    void loadDirectory(); void loadTasks();
-    void fetch("/api/auth/session", { cache: "no-store" }).then((response) => response.json() as Promise<SessionInfo>).then((session: SessionInfo) => { setUserSession(session);  setAdminEmail(session.email ?? ""); }).catch(() => undefined);
-  }
-
   async function submitAdminLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoggingIn(true);
@@ -357,9 +336,9 @@ export function TaskDashboard() {
       });
       const data = await response.json() as SessionInfo & { error?: string };
       if (!response.ok || !data.authenticated) throw new Error(data.error || "تعذر تسجيل الدخول.");
-      setUserSession(data);
+      setUserSession(data); setLastTaskChange(null); clearTaskUndo();
 
-      setAdminEmail(data.email ?? loginEmail);
+
       setLoginPassword("");
       setLoginOpen(false);
       toast.success(data.mustChangePassword ? "غيّر كلمة المرور لإكمال الدخول." : "تم تسجيل الدخول");
@@ -375,17 +354,17 @@ export function TaskDashboard() {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("تعذر تسجيل الخروج.");
       setUserSession(null);
-      setLastTaskChange(null);
+      setLastTaskChange(null); clearTaskUndo();
       setPasswordOpen(false);
       setProductDraft(null);
-      setEntitiesOpen(false);
-      setAssignmentUsers([]);
-      setAdminManagerOpen(false);
-      setRegistrationReviewOpen(false);
-      setMailboxOpen(false);
-      setApprovedRequest(null);
 
-      setAdminEmail("");
+      setAssignmentUsers([]);
+
+
+
+
+
+
       setEditing(null);
       setCreatingTask(false);
       setDraft(null);
@@ -407,7 +386,7 @@ export function TaskDashboard() {
     if (!response.ok) throw new Error(data.error || "تعذر حفظ التعديل.");
     if (!data.task) throw new Error("لم ترجع الخدمة بيانات المهمة المحدثة.");
     setTasks((current) => current.map((task) => task.id === id ? data.task! : task));
-    if (previous) setLastTaskChange(taskUndo(previous, data.task));
+    if (previous) { const undo = taskUndo(previous, data.task); rememberTaskUndo(taskIdentity.current, undo); setLastTaskChange(undo); }
     if (!silent) toast.success("تم حفظ تحديث المهمة؛ يمكنك التراجع عن آخر تعديل.");
     return data.task;
   }, []);
@@ -420,7 +399,7 @@ export function TaskDashboard() {
       const data = await response.json() as { task?: Task; error?: string };
       if (!response.ok || !data.task) throw new Error(data.error || "تعذر التراجع.");
       setTasks(current => current.map(task => task.id === data.task!.id ? data.task! : task));
-      setLastTaskChange(null);
+      setLastTaskChange(null); rememberTaskUndo(taskIdentity.current, null);
       toast.success("تم التراجع عن آخر تعديل محفوظ، واستعادة التفاصيل السابقة.");
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر التراجع."); }
     finally { setUndoingTask(false); }
@@ -639,23 +618,9 @@ export function TaskDashboard() {
               <p className="mt-0.5 hidden text-sm text-slate-500 sm:block">خطة التنفيذ للجزء الأول - ثلاثة أشهر</p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
-            <DropdownMenu dir="rtl"><DropdownMenuTrigger asChild><Button variant="outline" className="rounded-xl border-teal-100 bg-teal-50/50 text-teal-900"><Settings className="size-4" /><span>الإعدادات</span></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 rounded-2xl p-2 text-right">{userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setPermissionEmail(undefined); setPermissionsOpen(true); }}><Settings className="size-4" />صلاحيات المستخدمين</DropdownMenuItem>}{(canResource("projects", "create") || canResource("products", "create")) && <>{canResource("projects", "create") && <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProjectId(null); setProjectDraft({ name: "", description: "" }); }}><Plus className="size-4" />إضافة مشروع</DropdownMenuItem>}{canResource("products", "create") && <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => { setEditingProductId(null); setProductDraft({ projectId: activeProjectId, name: "", target: "", description: "", details: [] }); }}><Plus className="size-4" />إضافة منتج</DropdownMenuItem>}<DropdownMenuSeparator /></>}{userSession?.authenticated && !userSession.mustChangePassword && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setActivityOpen(true)}><ListChecks className="size-4" />سجل العمليات</DropdownMenuItem>}
-                <DropdownMenuItem className="gap-2 rounded-lg text-teal-900" onSelect={() => setRegistrationOpen(true)}><UserPlus className="size-4" />طلب تسجيل</DropdownMenuItem>
-                {userSession?.canManageUsers && <DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setRegistrationReviewOpen(true)}><ListChecks className="size-4" />طلبات التسجيل{registrationCount > 0 && <span className="ms-auto rounded-full bg-amber-100 px-2 text-xs font-bold text-amber-800">{registrationCount}</span>}</DropdownMenuItem>}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="gap-2 rounded-lg" disabled={authLoading} onSelect={() => {
-                  if (!userSession?.authenticated) { setLoginError(""); setLoginOpen(true); }
-                  else if (userSession.canManageUsers) setMailboxOpen(true);
-                  else toast.error("البريد الإلكتروني متاح لمدير النظام فقط.");
-                }}><Mail className="size-4" />البريد الإلكتروني</DropdownMenuItem>
-                <DropdownMenuLabel className="space-y-1 px-3 py-2"><p className="text-xs font-normal text-slate-500">الحساب الحالي</p>{userSession?.authenticated ? <><p className="font-bold text-teal-900">{userSession.position ? POSITIONS[userSession.position] : "مستخدم"}</p><p dir="ltr" className="break-all text-right text-xs font-normal text-slate-600">{userSession.loginEmail ?? adminEmail}</p></> : <p className="text-sm text-slate-600">لم تسجّل الدخول</p>}</DropdownMenuLabel>
-                {userSession?.authenticated && <><DropdownMenuSeparator /><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setPasswordOpen(true)}><KeyRound className="size-4" />تغيير كلمة المرور</DropdownMenuItem>
-                  {userSession.canManageUsers && <><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setAdminManagerOpen(true)}><UserPlus className="size-4" />إدارة المستخدمين</DropdownMenuItem><DropdownMenuItem className="gap-2 rounded-lg" onSelect={() => setEntitiesOpen(true)}><Building2 className="size-4" />إدارة الجهات</DropdownMenuItem></>}
-                </>}
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <div className="flex min-w-0 flex-wrap items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
+            <UserGreeting name={userSession?.authenticated ? userSession.name : null} />
+
             <Button variant="outline" className="rounded-xl border-slate-200 bg-white" disabled={authLoading} onClick={() => { if (userSession?.authenticated) void logoutAdmin(); else { setLoginError(""); setLoginOpen(true); } }}>{userSession?.authenticated ? <LogOut className="size-4" /> : <LogIn className="size-4" />}<span>{userSession?.authenticated ? "تسجيل الخروج" : "تسجيل الدخول"}</span></Button>
           </div>
         </div>
@@ -668,7 +633,7 @@ export function TaskDashboard() {
           {(canResource("projects", "edit") || canResource("projects", "update")) && <><Button variant="outline" className="h-11 rounded-xl" onClick={() => { if (currentProject) { setEditingProjectId(currentProject.id); setProjectDraft({ name: currentProject.name, description: currentProject.description, entityIds: currentProject.entityIds ?? [] }); } }}><Pencil />تعديل المشروع</Button></>}
           {currentProject?.description && <p className="w-full whitespace-pre-wrap text-sm leading-6 text-slate-500">{currentProject.description}</p>}
           <div className="flex w-full flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
-            <div className="flex flex-wrap gap-3">{canResource("tasks", "create") && <>
+            <div className="flex flex-wrap gap-3"><Button asChild variant="outline" className="rounded-xl border-teal-100 text-teal-900"><Link href={`/settings/account?project=${encodeURIComponent(activeProjectId)}`}><Settings className="size-4" />إعدادات النظام</Link></Button>{canResource("tasks", "create") && <>
 
           <Button variant="outline" className="rounded-xl border-teal-200 text-teal-800" disabled={!visibleProducts.length} onClick={() => newTask()}><Plus />إضافة مهمة</Button>
             </>}</div>
@@ -810,12 +775,12 @@ export function TaskDashboard() {
         </DialogContent>
       </Dialog>
 
-      <EntityManager open={entitiesOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setEntitiesOpen} onChanged={refreshAdministration} />
-      <RegistrationRequestDialog open={registrationOpen} onOpenChange={setRegistrationOpen} />
-      <MailboxDialog open={mailboxOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setMailboxOpen} />
-      <RegistrationReviewDialog open={registrationReviewOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setRegistrationReviewOpen} onApproved={request => { setApprovedRequest(request); setAdminManagerOpen(true); }} />
-      <PermissionsDialog open={permissionsOpen && Boolean(userSession?.canManageUsers)} onOpenChange={setPermissionsOpen} initialEmail={permissionEmail} onChanged={refreshAdministration} /><ActivityDialog key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} open={activityOpen && Boolean(userSession?.authenticated && !userSession.mustChangePassword)} onOpenChange={setActivityOpen} administrator={Boolean(userSession?.canManageUsers)} /><UserAccountManager onPermissions={email => { setPermissionEmail(email); setPermissionsOpen(true); }} projectId={activeProjectId} initialRegistration={approvedRequest} onChanged={refreshAdministration} open={adminManagerOpen && Boolean(userSession?.canManageUsers)} onOpenChange={value => { setAdminManagerOpen(value); if (!value) setApprovedRequest(null); }} currentEmail={adminEmail} />
-      <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session);  setAdminEmail(session.email ?? ""); }} />
+
+
+
+
+
+      <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session);   }} />
       <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 
       <Dialog open={!!projectDraft && Boolean(editingProjectId ? canResource("projects", "edit") || canResource("projects", "update") : canResource("projects", "create"))} onOpenChange={(open) => { if (!open && !projectSaving) { setProjectDraft(null); setEditingProjectId(null); } }}>

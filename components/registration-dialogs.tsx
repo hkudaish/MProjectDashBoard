@@ -29,7 +29,7 @@ export function useRegistrationCount(enabled: boolean) {
   return enabled ? count : 0;
 }
 
-export function RegistrationRequestDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function RegistrationRequestDialog({ embedded = false, open, onOpenChange }: { embedded?: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState({ name: "", jobTitle: "", department: "", email: "", entityId: "", projectId: "" });
   const [entities, setEntities] = useState<Entity[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -68,7 +68,7 @@ export function RegistrationRequestDialog({ open, onOpenChange }: { open: boolea
     finally { setSaving(false); }
   }
   return <Dialog open={open} onOpenChange={changeOpen}>
-    <DialogContent dir="rtl" className="rounded-3xl text-right sm:max-w-lg">
+    <DialogContent embedded={embedded} dir="rtl" className="rounded-3xl text-right sm:max-w-lg">
       <DialogHeader className="sm:text-right"><DialogTitle>طلب تسجيل</DialogTitle><DialogDescription>مرحبًا بك! يسعدنا انضمامك. أكمل بياناتك لإرسال طلب التسجيل إلى مدير النظام للمراجعة والاعتماد.</DialogDescription></DialogHeader>
       {message ? <><p role="status" className="rounded-xl bg-emerald-50 p-4 text-sm leading-7 text-emerald-800">{message}</p><Button onClick={() => changeOpen(false)}>إغلاق</Button></> : <form onSubmit={submit} className="grid gap-4">
         <fieldset disabled={saving} className="grid gap-4 sm:grid-cols-2">
@@ -88,7 +88,7 @@ export function RegistrationRequestDialog({ open, onOpenChange }: { open: boolea
 }
 
 const colors: Record<RegistrationStatus, string> = { pending: "bg-amber-50 text-amber-800", approved: "bg-sky-50 text-sky-800", rejected: "bg-red-50 text-red-800", on_hold: "bg-violet-50 text-violet-800", activated: "bg-emerald-50 text-emerald-800" };
-export function RegistrationReviewDialog({ open, onOpenChange, onApproved }: { open: boolean; onOpenChange: (open: boolean) => void; onApproved: (request: RegistrationRequest) => void }) {
+export function RegistrationReviewDialog({ embedded = false, open, onOpenChange, onApproved }: { embedded?: boolean; open: boolean; onOpenChange: (open: boolean) => void; onApproved: (request: RegistrationRequest) => void }) {
   const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [configured, setConfigured] = useState(false);
   const [mailMode, setMailMode] = useState<"unconfigured" | "test" | "live">("unconfigured");
@@ -122,7 +122,7 @@ export function RegistrationReviewDialog({ open, onOpenChange, onApproved }: { o
     catch (error) { setError(error instanceof Error ? error.message : "تعذر إعادة الإرسال."); }
     finally { setSaving(false); }
   }
-  return <Dialog open={open} onOpenChange={value => { if (!saving) onOpenChange(value); }}><DialogContent dir="rtl" className="max-h-[90vh] overflow-y-auto rounded-3xl text-right sm:max-w-3xl">
+  return <Dialog open={open} onOpenChange={value => { if (!saving) onOpenChange(value); }}><DialogContent embedded={embedded} dir="rtl" className="max-h-[90vh] overflow-y-auto rounded-3xl text-right sm:max-w-3xl">
     <DialogHeader className="sm:text-right"><DialogTitle>طلبات التسجيل</DialogTitle><DialogDescription>راجع بيانات المتقدمين. الموافقة تفتح نموذج المستخدمين لاستكمال المنصب والتبعية وكلمة المرور المؤقتة، ثم تفعيل الحساب.</DialogDescription></DialogHeader>
     <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={loading || saving} onClick={() => void load()}><RefreshCw className="size-4" />تحديث الطلبات</Button><Button variant="outline" size="sm" disabled={!configured || loading || saving} onClick={() => void retryMail()}>إعادة إرسال الإشعارات المعلقة</Button></div>
     {!configured && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">إرسال البريد غير مهيأ بعد. الطلبات والقرارات محفوظة، والإشعارات تنتظر ربط خدمة البريد.</p>}

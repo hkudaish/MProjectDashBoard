@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const redirectUri = process.env.GOOGLE_REDIRECT_URI;
-  const home = redirectUri ? new URL("/", redirectUri) : new URL("/", request.url);
+  const home = redirectUri ? new URL("/settings/mail", redirectUri) : new URL("/settings/mail", request.url);
   let connected = false;
   try {
     if (!oauthReady()) throw new Error("Not configured");

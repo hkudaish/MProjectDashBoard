@@ -72,6 +72,7 @@ const activityRoute = await exports("app/api/activity/route.ts");
 const userNotifyRoute = await exports("app/api/auth/users/notify/route.ts");
 const permissionsRoute = await exports("app/api/permissions/route.ts");
 const permissionRules = await exports("lib/permissions.ts");
+const settingsRules = await exports("lib/settings-sections.ts");
 const undoRules = await exports("lib/task-undo.ts");
 const originalFetch = globalThis.fetch;
 const mailboxRoute = await exports("app/api/mailbox/route.ts");
@@ -94,6 +95,21 @@ function cookie(response) { return response.headers.get("set-cookie").split(";")
 function resourceRequest(path, body, token, method) {
   return new Request(`${origin}/api/${path}`, { method, headers: { "Content-Type": "application/json", origin, ...(token ? { cookie: token } : {}) }, body: JSON.stringify(body) });
 }
+test("settings pages follow account permissions and session responses include the user's display name", async () => {
+  const admin = await adminCookie(), employee = await chatUser(admin, "settings-user@example.com", "اسم مسجل الدخول");
+  const administrator = await (await session.GET(request(null, admin, "GET"))).json();
+  const staff = await (await session.GET(request(null, employee, "GET"))).json();
+  assert.equal(staff.name, "اسم مسجل الدخول");
+  assert.ok(Object.keys(settingsRules.SETTINGS_SECTIONS).every(section => settingsRules.canOpenSettings(section, administrator)));
+  for (const section of ["account", "registration", "activity", "password"]) assert.equal(settingsRules.canOpenSettings(section, staff), true);
+  for (const section of ["permissions", "users", "entities", "requests", "mail", "projects", "products"]) assert.equal(settingsRules.canOpenSettings(section, staff), false);
+  const rights = permissionRules.permissionsFor(await accounts.findAccount("settings-user@example.com")); rights.projects.create = true;
+  await permissionsRoute.PATCH(request({ email: "settings-user@example.com", permissions: rights }, admin, "PATCH"));
+  const delegated = await (await session.GET(request(null, employee, "GET"))).json();
+  assert.equal(settingsRules.canOpenSettings("projects", delegated), true); assert.equal(settingsRules.canOpenSettings("products", delegated), false); assert.equal(settingsRules.canOpenSettings("users", delegated), false);
+  assert.equal(settingsRules.canOpenSettings("registration", null), true); assert.equal(settingsRules.canOpenSettings("users", null), false);
+  assert.equal(settingsRules.canOpenSettings("projects", { ...delegated, mustChangePassword: true }), false);
+});
 test("delegated task editing enables main fields and all details without granting assignment authority", async () => {
   const admin = await adminCookie(), employee = await chatUser(admin, "alice@example.com", "Alice");
   await chatUser(admin, "bob@example.com", "Bob");
@@ -633,10 +649,10 @@ test("Google authorization requires an admin, same origin, state and PKCE; token
   assert.equal(url.searchParams.get("access_type"),"offline");assert.equal(url.searchParams.get("code_challenge_method"),"S256");
   assert.equal(url.searchParams.get("scope"),gmailApi.GMAIL_SCOPES.join(" "));
   const stateCookie=started.headers.get("set-cookie").split(";")[0];assert.ok(started.headers.get("set-cookie").includes("HttpOnly"));assert.ok(started.headers.get("set-cookie").includes("SameSite=Lax"));
-  assert.equal((await gmailCallback.GET(new Request(origin+"/api/mailbox/callback?code=test&state=wrong",{headers:{cookie:stateCookie}}))).headers.get("location"),origin+"/?gmail=error");
+  assert.equal((await gmailCallback.GET(new Request(origin+"/api/mailbox/callback?code=test&state=wrong",{headers:{cookie:stateCookie}}))).headers.get("location"),origin+"/settings/mail?gmail=error");
   assert.equal(data.has("gmail-oauth-v1"),false);
   const response=await gmailCallback.GET(new Request(origin+"/api/mailbox/callback?code=test&state="+url.searchParams.get("state"),{headers:{cookie:stateCookie}}));
-  assert.equal(response.headers.get("location"),origin+"/?gmail=connected");
+  assert.equal(response.headers.get("location"),origin+"/settings/mail?gmail=connected");
   const encrypted=data.get("gmail-oauth-v1").value;assert.equal(encrypted.includes("new-refresh"),false);assert.equal(gmailApi.unseal(encrypted).refreshToken,"new-refresh");
   assert.equal(await gmailApi.gmailConfigured(),true);
 });
@@ -655,12 +671,12 @@ test("Google callback rejects expired state, stale admin sessions, missing scope
   const admin=await adminCookie();configureGmail();delete process.env.GOOGLE_REFRESH_TOKEN;
   const account=await accounts.findAccount("admin@example.com");
   const makeRequest=(values={})=>new Request(origin+"/api/mailbox/callback?code=test&state=test-state",{headers:{cookie:"gmail_oauth_state="+gmailApi.seal({state:"test-state",verifier:"verifier",email:account.email,sessionVersion:account.sessionVersion,expiresAt:Date.now()+600000,...values})}});
-  for (const values of [{expiresAt:1},{sessionVersion:account.sessionVersion+1}]) assert.equal((await gmailCallback.GET(makeRequest(values))).headers.get("location"),origin+"/?gmail=error");
+  for (const values of [{expiresAt:1},{sessionVersion:account.sessionVersion+1}]) assert.equal((await gmailCallback.GET(makeRequest(values))).headers.get("location"),origin+"/settings/mail?gmail=error");
   const normalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options)=>String(url).endsWith("/token")?Response.json({access_token:"test-access",refresh_token:"new-refresh",scope:gmailApi.GMAIL_SCOPES[0]}):normalFetch(url,options);
-  assert.equal((await gmailCallback.GET(makeRequest())).headers.get("location"),origin+"/?gmail=error");
+  assert.equal((await gmailCallback.GET(makeRequest())).headers.get("location"),origin+"/settings/mail?gmail=error");
   globalThis.fetch=async(url,options)=>String(url).endsWith("/profile")?Response.json({emailAddress:"different@gmail.com"}):normalFetch(url,options);
-  assert.equal((await gmailCallback.GET(makeRequest())).headers.get("location"),origin+"/?gmail=error");
+  assert.equal((await gmailCallback.GET(makeRequest())).headers.get("location"),origin+"/settings/mail?gmail=error");
   assert.equal(data.has("gmail-oauth-v1"),false);
   // Tampered encrypted tokens fail closed and permit reconnecting.
   data.set("gmail-oauth-v1",{value:"invalid-ciphertext",etag:"test"});assert.equal(await gmailApi.gmailConfigured(),false);

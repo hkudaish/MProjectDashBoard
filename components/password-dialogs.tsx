@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { SessionInfo } from "@/lib/user-types";
 
-export function PasswordChangeDialog({ open, required, onOpenChange, onSaved, onLogout }: { open: boolean; required: boolean; onOpenChange: (open: boolean) => void; onSaved: (session: SessionInfo) => void; onLogout: () => Promise<void> }) {
+export function PasswordChangeDialog({ embedded = false, open, required, onOpenChange, onSaved, onLogout }: { embedded?: boolean; open: boolean; required: boolean; onOpenChange: (open: boolean) => void; onSaved: (session: SessionInfo) => void; onLogout: () => Promise<void> }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -27,7 +27,7 @@ export function PasswordChangeDialog({ open, required, onOpenChange, onSaved, on
     finally { setSaving(false); }
   }
   return <Dialog open={open} onOpenChange={(value) => { if (!required && !saving) { if (!value) clear(); onOpenChange(value); } }}>
-    <DialogContent dir="rtl" className="rounded-3xl text-right sm:max-w-md" showCloseButton={!required && !saving} onEscapeKeyDown={(event) => { if (required || saving) event.preventDefault(); }} onInteractOutside={(event) => { if (required || saving) event.preventDefault(); }}>
+    <DialogContent embedded={embedded} dir="rtl" className="rounded-3xl text-right sm:max-w-md" showCloseButton={!required && !saving} onEscapeKeyDown={(event) => { if (required || saving) event.preventDefault(); }} onInteractOutside={(event) => { if (required || saving) event.preventDefault(); }}>
       <DialogHeader className="text-right sm:text-right"><DialogTitle>{required ? "تغيير كلمة المرور مطلوب" : "تغيير كلمة المرور"}</DialogTitle><DialogDescription>{required ? "لإكمال الدخول، غيّر كلمة المرور المؤقتة التي تسلمتها من مسؤول النظام. لا يمكنك استخدام صلاحيات الحساب قبل تغييرها." : "اختر كلمة مرور خاصة بك لا تقل عن 10 أحرف."}</DialogDescription></DialogHeader>
       <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
         <fieldset disabled={saving} className="grid gap-4">

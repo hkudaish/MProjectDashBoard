@@ -51,10 +51,18 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  embedded = false,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
+  embedded?: boolean
 }) {
+  if (embedded) return (
+    <section data-slot="form-content" dir={props.dir} id={props.id} style={props.style}
+      className={cn("grid gap-4 rounded-3xl border bg-background p-5 shadow-sm", className, "relative h-auto max-h-none w-full min-w-0 max-w-none sm:max-w-none [&_[data-slot=dialog-title]]:sr-only")}>
+      {children}
+    </section>
+  );
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />

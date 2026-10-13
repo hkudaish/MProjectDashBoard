@@ -34,6 +34,7 @@ export type PublicUser = {
 };
 export type UserSession = PublicUser & { expiresAt: number; sessionVersion: number };
 export type SessionInfo = {
+  name?: string | null; projectId?: string | null;
   resourcePermissions?: ResourcePermissions;
   configured: boolean; authenticated: boolean; isAdmin: boolean;
   canManageUsers: boolean; mustChangePassword: boolean;
