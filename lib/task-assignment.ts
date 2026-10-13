@@ -6,22 +6,24 @@ import type { PublicUser, UserSession } from "./user-types";
 import type { Task, TaskDetail, TaskPermissions } from "./types";
 export class TaskPolicyError extends Error { constructor(message: string, public status = 403) { super(message); } }
 export function taskPermissions(actor: PublicUser, task: Task, users: PublicUser[]): TaskPermissions {
-  if (actor.position === "system_admin") return { canDelete: true, canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: (task.details ?? []).map((detail) => detail.id) };
+  if (actor.position === "system_admin") return { canAddDetails: true, canDelete: true, canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: (task.details ?? []).map((detail) => detail.id) };
   const managerial = isManager(actor.position);
   const descendants = new Set(subordinateUsers(users, actor.email).filter((user) => user.active).map((user) => user.email));
   const owns = (email?: string) => Boolean(email && (email === actor.email || managerial && descendants.has(email)));
   const scopeMain = owns(task.assigneeEmail) || !task.assigneeEmail && task.createdByEmail === actor.email;
-  const canEditMain = permitted(actor, "tasks", "edit") && scopeMain;
-  const canUpdateMain = permitted(actor, "tasks", "update") && scopeMain;
-  const editableDetailIds = (task.details ?? []).filter((detail) => owns(detail.assigneeEmail) || canEditMain && !detail.assigneeEmail).map((detail) => detail.id);
-  return { canDelete: permitted(actor, "tasks", "delete") && scopeMain, canEdit: canEditMain || canUpdateMain || editableDetailIds.length > 0 && (permitted(actor, "tasks", "edit") || permitted(actor, "tasks", "update")), canEditMain, canUpdateMain, canAssign: managerial && permitted(actor, "tasks", "edit") && (canEditMain || editableDetailIds.length > 0), editableDetailIds };
+  const delegatedEdit = Boolean(actor.resourcePermissions?.tasks.edit);
+  const canEditMain = permitted(actor, "tasks", "edit") && (scopeMain || delegatedEdit);
+  const canUpdateMain = permitted(actor, "tasks", "update") && (scopeMain || delegatedEdit);
+  const canAddDetails = canEditMain || permitted(actor, "tasks", "create") && (scopeMain || Boolean(actor.resourcePermissions?.tasks.create));
+  const editableDetailIds = (task.details ?? []).filter((detail) => delegatedEdit && canEditMain || owns(detail.assigneeEmail) || canEditMain && !detail.assigneeEmail).map((detail) => detail.id);
+  return { canAddDetails, canDelete: permitted(actor, "tasks", "delete") && scopeMain, canEdit: canAddDetails || canEditMain || canUpdateMain || editableDetailIds.length > 0 && (permitted(actor, "tasks", "edit") || permitted(actor, "tasks", "update")), canEditMain, canUpdateMain, canAssign: managerial && permitted(actor, "tasks", "edit") && (canEditMain || editableDetailIds.length > 0), editableDetailIds };
 }
 function detailFields(detail: TaskDetail) { return { id: detail.id, description: detail.description, status: detail.status, completionDate: detail.completionDate, ownerType: detail.ownerType, assigneeEmail: detail.assigneeEmail ?? "", ...(!detail.assigneeEmail ? { assignee: detail.assignee } : {}) }; }
 export async function normalizeTaskAssignments(actor: UserSession, next: Task, previous?: Task): Promise<Task> {
   const users = await listUsers();
   const systemAdmin = actor.position === "system_admin";
   if (!previous && !permitted(actor, "tasks", "create")) throw new TaskPolicyError("إنشاء المهام متاح للمسؤولين فقط.");
-  const permissions = previous ? taskPermissions(actor, previous, users) : { canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] };
+  const permissions = previous ? taskPermissions(actor, previous, users) : { canAddDetails: true, canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] };
   if (!permissions.canEdit) throw new TaskPolicyError("لا تملك صلاحية تعديل هذه المهمة.");
   if (previous && !permissions.canEditMain) {
     const allowed = permissions.canUpdateMain ? new Set(["status", "progress", "notes"]) : new Set<string>();
@@ -38,6 +40,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
   }
   function assignment(item: { assignee: string; assigneeEmail?: string }, old?: { assignee: string; assigneeEmail?: string }) {
     const email = item.assigneeEmail?.trim().toLowerCase() ?? "";
+    if (previous && !permissions.canAssign && email !== (old?.assigneeEmail ?? "")) throw new TaskPolicyError("لا تملك صلاحية تغيير إسناد المهمة.");
     if (email) {
       const target = users.find((user) => user.email === email);
       if (!target && email === old?.assigneeEmail) return { assigneeEmail: email, assignee: old.assignee };
@@ -54,7 +57,7 @@ export async function normalizeTaskAssignments(actor: UserSession, next: Task, p
   for (const detail of next.details ?? []) {
     const old = previous?.details?.find((item) => item.id === detail.id);
     if (previous && !systemAdmin) {
-      if (!old && !permissions.canEditMain) throw new TaskPolicyError("لا تملك صلاحية إضافة صفوف إلى هذه المهمة.");
+      if (!old && !permissions.canAddDetails) throw new TaskPolicyError("لا تملك صلاحية إضافة صفوف إلى هذه المهمة.");
       if (old && !permissions.editableDetailIds.includes(old.id) && JSON.stringify(detailFields(detail)) !== JSON.stringify(detailFields(old))) throw new TaskPolicyError("لا يمكنك تعديل صف مسند خارج نطاقك الإداري.");
       if (old && !permitted(actor, "tasks", "edit")) for (const key of ["description", "ownerType", "assignee", "assigneeEmail"] as const) {
         if (key === "assignee" && detail.assigneeEmail === old.assigneeEmail && detail.assigneeEmail) continue;

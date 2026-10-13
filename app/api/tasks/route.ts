@@ -9,7 +9,7 @@ import { OWNER_LABELS } from "@/lib/types";
 import { taskInputSchema, taskTitleSchema } from "@/lib/products";
 import { createProductStore } from "@/lib/product-store";
 import { DEFAULT_TASKS } from "@/lib/task-data";
-import { createTaskStore } from "@/lib/task-store";
+import { createTaskStore, TaskConflictError } from "@/lib/task-store";
 import { getUserSession } from "@/lib/admin-auth";
 import type { Task } from "@/lib/types";
 import { taskDetailsSchema } from "@/lib/task-details";
@@ -112,6 +112,8 @@ async function handlePATCH(request: Request) {
     const { store, tasks } = await readTasks();
     const index = tasks.findIndex((task) => task.id === id);
     if (index === -1) return Response.json({ error: "لم يتم العثور على المهمة." }, { status: 404 });
+    if ("expectedUpdatedAt" in payload && (typeof payload.expectedUpdatedAt !== "string" || payload.expectedUpdatedAt !== tasks[index].updatedAt)) return Response.json({ error: "تغيّرت المهمة بعد آخر قراءة. حدّث البيانات وراجع التغييرات قبل الحفظ أو التراجع." }, { status: 409 });
+    update.updatedAt = new Date(Math.max(Date.now(), (Date.parse(tasks[index].updatedAt) || 0) + 1)).toISOString();
 
     requireChanges(session, "tasks", tasks[index], { ...tasks[index], ...update });
     const updated = await normalizeTaskAssignments(session, { ...tasks[index], ...update } as Task, tasks[index]);
@@ -119,9 +121,10 @@ async function handlePATCH(request: Request) {
     updated.progress = progressForStatus(updated.status, updated.progress);
     const nextTasks = [...tasks];
     nextTasks[index] = updated;
-    await store.setTasks(nextTasks);
+    if (store.updateTask) await store.updateTask(updated, tasks[index].updatedAt); else await store.setTasks(nextTasks);
     return Response.json({ task: { ...updated, permissions: taskPermissions(session, updated, await listUsers()) } });
   } catch (error) {
+    if (error instanceof TaskConflictError) return Response.json({ error: error.message }, { status: 409 });
     if (error instanceof PermissionError) return Response.json({ error: error.message }, { status: 403 });
     if (error instanceof TaskPolicyError) return Response.json({ error: error.message }, { status: error.status });
     console.error("PATCH /api/tasks failed", error);

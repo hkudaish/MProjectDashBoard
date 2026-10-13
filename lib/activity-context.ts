@@ -73,6 +73,7 @@ export async function describeActivity(key: string, method: string, input: Data,
   const singular: Record<string, string> = { tasks: "مهمة", products: "منتج", projects: "مشروع", entities: "جهة", users: "مستخدم", admins: "مستخدم", "registration-requests": "طلب تسجيل" };
   if (singular[key]) action = method === "POST" ? `إضافة ${singular[key]}` : method === "DELETE" ? `حذف ${singular[key]}` : method === "PATCH" ? `تعديل بيانات ${singular[key]}` : undefined;
   if (key === "tasks" && method === "PATCH" && !["title", "plannedDate", "endDate", "ownerType", "assigneeEmail"].some(field => field in input) && ["status", "progress", "notes"].some(field => field in input)) action = "تحديث إنجاز المهمة";
+  if (key === "tasks" && method === "PATCH" && input.undo === true) action = "تعديل المهمة بطلب التراجع";
   if (key === "users" && method === "PATCH") action = typeof input.temporaryPassword === "string" ? "إعادة ضبط كلمة مرور المستخدم" : typeof input.active === "boolean" ? input.active ? "تفعيل حساب المستخدم" : "تعطيل حساب المستخدم" : "تعديل بيانات المستخدم";
   if (key === "entities" && method === "PATCH" && typeof input.hidden === "boolean") action = input.hidden ? "حجب جهة" : "إظهار جهة";
   if (key === "registration-requests" && method === "PATCH" && typeof input.status === "string") action = `مراجعة طلب تسجيل — ${statuses[input.status] || safeText(input.status)}`;

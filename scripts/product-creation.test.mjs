@@ -14,6 +14,7 @@ let reads = 0;
 let writes = 0;
 const seed = { id: "existing", productId: "digital", productName: "المحتوى الرقمي", title: "المهمة الحالية", plannedDate: "2026-10-01", endDate: "2026-10-08", status: "completed", progress: 100, ownerType: "wamy", assignee: "", notes: "", sourceOrder: 1, updatedAt: "2026-10-01" };
 const stubs = {
+  "./versioned-store": { updateRecord: async (key, fallback, action) => { const values = structuredClone(records.get(key) ?? fallback); const result = action(values); records.set(key, values); writes++; return result; } },
   "@/lib/activity-log": { withActivity: (_action, handler) => handler },
   "@/lib/resource-access": { withResourceAccess: (_resource, _action, handler) => async request => admin && role === "admin" ? handler(request) : Response.json({}, { status: 403 }) },
   "@/lib/resource-deletion": { deleteResource: async () => Response.json({}) },

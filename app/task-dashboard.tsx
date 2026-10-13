@@ -64,8 +64,10 @@ import { progressForStatus } from "@/lib/task-progress";
 import { PRODUCT_COLORS, STATUS_COLORS, productColors } from "@/lib/task-theme";
 import { OWNER_LABELS, STATUS_LABELS, type Task, type TaskStatus, type Product, type Project } from "@/lib/types";
 
+import { taskUndo, type TaskPatch, type TaskUndo } from "@/lib/task-undo";
+
 type TimingState = "late" | "active" | "soon" | "upcoming" | "done";
-type TaskPatch = Partial<Pick<Task, "status" | "progress" | "ownerType" | "assignee" | "notes" | "title" | "plannedDate" | "endDate" | "details" | "assigneeEmail">>;
+
 
 const PRODUCT_ICONS = [
   { id: "digital", name: "المحتوى الرقمي", target: "188 بوست", icon: Images },
@@ -258,6 +260,9 @@ export function TaskDashboard() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [draft, setDraft] = useState<Task | null>(null);
   const [saving, setSaving] = useState(false);
+  const [lastTaskChange, setLastTaskChange] = useState<TaskUndo | null>(null);
+  const [undoingTask, setUndoingTask] = useState(false);
+  const [detailEditorVersion, setDetailEditorVersion] = useState(0);
   const tasksRef = useRef<Task[]>([]);
 
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
@@ -302,6 +307,7 @@ export function TaskDashboard() {
       if (!response.ok) throw new Error("تعذر التحقق من صلاحيات الدخول.");
       if (!current) return;
       setUserSession(data);
+      setLastTaskChange(null);
       setAuthConfigured(Boolean(data.configured));
 
       setAdminEmail(data.email ?? "");
@@ -369,6 +375,7 @@ export function TaskDashboard() {
       const response = await fetch("/api/auth/logout", { method: "POST" });
       if (!response.ok) throw new Error("تعذر تسجيل الخروج.");
       setUserSession(null);
+      setLastTaskChange(null);
       setPasswordOpen(false);
       setProductDraft(null);
       setEntitiesOpen(false);
@@ -390,18 +397,34 @@ export function TaskDashboard() {
   }
 
   const persistTask = useCallback(async (id: string, patch: TaskPatch, silent = false) => {
+    const previous = tasksRef.current.find(task => task.id === id);
     const response = await fetch("/api/tasks", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...patch }),
+      body: JSON.stringify({ id, ...patch, ...(previous ? { expectedUpdatedAt: previous.updatedAt } : {}) }),
     });
     const data = await response.json() as { task?: Task; error?: string };
     if (!response.ok) throw new Error(data.error || "تعذر حفظ التعديل.");
     if (!data.task) throw new Error("لم ترجع الخدمة بيانات المهمة المحدثة.");
     setTasks((current) => current.map((task) => task.id === id ? data.task! : task));
-    if (!silent) toast.success("تم حفظ تحديث المهمة");
+    if (previous) setLastTaskChange(taskUndo(previous, data.task));
+    if (!silent) toast.success("تم حفظ تحديث المهمة؛ يمكنك التراجع عن آخر تعديل.");
     return data.task;
   }, []);
+
+  async function undoSavedTask() {
+    if (!lastTaskChange || undoingTask) return;
+    setUndoingTask(true);
+    try {
+      const response = await fetch("/api/tasks", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: lastTaskChange.id, ...lastTaskChange.patch, expectedUpdatedAt: lastTaskChange.version, undo: true }) });
+      const data = await response.json() as { task?: Task; error?: string };
+      if (!response.ok || !data.task) throw new Error(data.error || "تعذر التراجع.");
+      setTasks(current => current.map(task => task.id === data.task!.id ? data.task! : task));
+      setLastTaskChange(null);
+      toast.success("تم التراجع عن آخر تعديل محفوظ، واستعادة التفاصيل السابقة.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر التراجع."); }
+    finally { setUndoingTask(false); }
+  }
 
   useEffect(() => {
     type ModelContext = { registerTool: (tool: Record<string, unknown>, options?: { signal?: AbortSignal }) => void | Promise<void> };
@@ -654,7 +677,7 @@ export function TaskDashboard() {
         </section>
         <section className="mb-6 flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
           <div>
-            <h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">لوحة المعلومات ومتابعة الإنجاز</h2>
+            {lastTaskChange && userSession?.authenticated && !userSession.mustChangePassword && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{lastTaskChange && userSession?.authenticated && !userSession.mustChangePassword && <><p>آخر تعديل محفوظ: {lastTaskChange.title}</p><Button variant="outline" disabled={undoingTask || saving} onClick={() => void undoSavedTask()}>التراجع عن آخر تعديل محفوظ</Button></>}</div>}<h2 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">لوحة المعلومات ومتابعة الإنجاز</h2>
           </div>
         </section>
 
@@ -809,7 +832,7 @@ export function TaskDashboard() {
             <label className="grid gap-2 text-sm font-bold">اسم المنتج<Input maxLength={120} className="h-11 rounded-xl" disabled={Boolean(editingProductId && !canResource("products", "edit"))} value={productDraft.name} onChange={(e) => setProductDraft({ ...productDraft, name: e.target.value })} /></label>
             <label className="grid gap-2 text-sm font-bold">المستهدف<Input maxLength={120} placeholder="مثل: 10 تقارير" className="h-11 rounded-xl" disabled={Boolean(editingProductId && !canResource("products", "edit"))} value={productDraft.target} onChange={(e) => setProductDraft({ ...productDraft, target: e.target.value })} /></label>
             <label className="grid gap-2 text-sm font-bold">وصف المنتج<Textarea maxLength={1200} className="rounded-xl" disabled={Boolean(editingProductId && !canResource("products", "edit"))} value={productDraft.description} onChange={(e) => setProductDraft({ ...productDraft, description: e.target.value })} /></label>
-            <TaskDetailsEditor details={productDraft.details ?? []} disabled={productSaving} canEditContent={!editingProductId || canResource("products", "edit")} canAdd={!editingProductId || canResource("products", "edit")} canAssign={!editingProductId || canResource("products", "edit")} canUpdate={!editingProductId || canResource("products", "update")} label="تفاصيل المنتج" users={assignmentUsers} ownerLabels={ownerLabels} onChange={(details) => setProductDraft({ ...productDraft, details })} />
+            <TaskDetailsEditor key={editingProductId ?? "new-product"} details={productDraft.details ?? []} disabled={productSaving} canEditContent={!editingProductId || canResource("products", "edit")} canAdd={!editingProductId || canResource("products", "edit")} canAssign={!editingProductId || canResource("products", "edit")} canUpdate={!editingProductId || canResource("products", "update")} label="تفاصيل المنتج" users={assignmentUsers} ownerLabels={ownerLabels} onChange={(details) => setProductDraft({ ...productDraft, details })} />
           </fieldset>}
           <DialogFooter><Button disabled={productSaving} onClick={() => void saveProduct()}>{productSaving ? <Loader2 className="animate-spin" /> : <Check />}{editingProductId ? "حفظ التعديلات" : "إضافة المنتج"}</Button><Button variant="outline" disabled={productSaving} onClick={() => { setProductDraft(null); setEditingProductId(null); }}>إلغاء</Button></DialogFooter>
         </DialogContent>
@@ -827,7 +850,7 @@ export function TaskDashboard() {
           {draft && <div className="grid gap-5 py-2">
             {creatingTask && <label className="grid gap-2 text-sm font-bold">المنتج<Select dir="rtl" value={draft.productId} disabled={saving} onValueChange={(productId) => setDraft({ ...draft, productId, productName: products.find((p) => p.id === productId)?.name ?? "" })}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue placeholder="اختر المنتج" /></SelectTrigger><SelectContent dir="rtl">{visibleProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name}</SelectItem>)}</SelectContent></Select></label>}
             <label className="grid gap-2 text-sm font-bold">عنوان المهمة<Textarea disabled={saving || !canEditMain} value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="min-h-24 rounded-xl text-base leading-7" /></label>
-            <TaskDetailsEditor details={draft.details ?? []} users={assignmentUsers} ownerLabels={ownerLabels} canAssign={canAssign} canUpdate={creatingTask || canResource("tasks", "update")} canEditContent={creatingTask || canResource("tasks", "edit")} canAdd={canEditMain && canAssign} editableDetailIds={creatingTask || userSession?.position === "system_admin" ? undefined : [...(draft.permissions?.editableDetailIds ?? []), ...(draft.details ?? []).filter((row) => !editing?.details?.some((old) => old.id === row.id)).map((row) => row.id)]} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />
+            <TaskDetailsEditor details={draft.details ?? []} users={assignmentUsers} ownerLabels={ownerLabels} canAssign={canAssign} canUpdate={creatingTask || canResource("tasks", "update")} canEditContent={creatingTask || canResource("tasks", "edit")} canAdd={creatingTask || draft.permissions?.canAddDetails === true || canEditMain} canDelete={creatingTask || canEditMain} newDetailIds={(draft.details ?? []).filter(row => !editing?.details?.some(old => old.id === row.id)).map(row => row.id)} key={`${creatingTask ? "new-task" : draft.id}:${detailEditorVersion}`} editableDetailIds={creatingTask || userSession?.position === "system_admin" ? undefined : [...(draft.permissions?.editableDetailIds ?? []), ...(draft.details ?? []).filter((row) => !editing?.details?.some((old) => old.id === row.id)).map((row) => row.id)]} disabled={saving} onChange={(details) => setDraft((current) => current ? { ...current, details } : current)} />
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm font-bold">الحالة<Select dir="rtl" disabled={saving || !canUpdateMain} value={draft.status} onValueChange={(value) => setDraft({ ...draft, status: value as TaskStatus, progress: progressForStatus(value as TaskStatus, draft.progress) })}><SelectTrigger className={`h-11 w-full rounded-xl text-right font-bold ${STATUS_COLORS[draft.status].badge}`}><SelectValue /></SelectTrigger><SelectContent dir="rtl">{STATUS_OPTIONS.map(([value, label]) => <SelectItem className={`my-1 rounded-lg ${STATUS_COLORS[value].badge}`} key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
               <label className="grid gap-2 text-sm font-bold">جهة الإسناد<Select dir="rtl" disabled={saving || !canEditMain} value={draft.ownerType} onValueChange={(value) => setDraft({ ...draft, ownerType: value })}><SelectTrigger className="h-11 w-full rounded-xl text-right"><SelectValue /></SelectTrigger><SelectContent dir="rtl">{!ownerLabels[draft.ownerType] && <SelectItem value={draft.ownerType} disabled>{draft.ownerName ?? OWNER_LABELS[draft.ownerType] ?? "جهة محجوبة"}</SelectItem>}{OWNER_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>
@@ -838,7 +861,7 @@ export function TaskDashboard() {
             <p className="-mt-2 text-xs leading-6 text-slate-500">تُحسب نسبة الإنجاز تلقائيًا حسب الحالة. يمكن تعديل آخر نسبة إنجاز للحالة المتعثرة.</p>
             <label className="grid gap-2 text-sm font-bold">ملاحظات التنفيذ<Textarea disabled={saving || !canUpdateMain} value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="أضف آخر المستجدات أو العوائق أو تفاصيل التسليم..." className="min-h-28 rounded-xl text-base leading-7" /></label>
           </div>}
-          <DialogFooter className="flex-row-reverse justify-start sm:justify-start"><Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving || !creatingTask && !taskCanEdit(draft!)}>{saving ? <Loader2 className="animate-spin" /> : <Check />}{creatingTask ? "إضافة المهمة" : "حفظ التحديث"}</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setCreatingTask(false); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
+          <DialogFooter className="flex-row-reverse flex-wrap justify-start gap-2 sm:justify-start">{editing && <Button variant="outline" disabled={saving} onClick={() => { setDraft(structuredClone(editing)); setDetailEditorVersion(version => version + 1); }}>التراجع عن تعديلات النموذج</Button>}<Button className="h-11 rounded-xl bg-[#116d7b] px-6 hover:bg-[#0c5965]" onClick={() => void saveDraft()} disabled={saving || !creatingTask && !taskCanEdit(draft!)}>{saving ? <Loader2 className="animate-spin" /> : <Check />}{creatingTask ? "إضافة المهمة" : "حفظ التحديث"}</Button><Button variant="outline" className="h-11 rounded-xl" onClick={() => { setEditing(null); setCreatingTask(false); setDraft(null); }} disabled={saving}>إلغاء</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </main>

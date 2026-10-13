@@ -38,6 +38,7 @@ await productsModule.link((specifier) => {
 });
 await productsModule.evaluate();
 const imports = {
+  "./versioned-store": { updateRecord: async (key, fallback, action) => { const values = structuredClone(persisted ?? fallback); const result = action(values); await store.setJSON(key, values); return result; } },
   "@/lib/activity-log": { withActivity: (_action, handler) => handler },
   "@/lib/resource-access": { withResourceAccess: (_resource, _action, handler) => handler },
   "@/lib/resource-deletion": { deleteResource: async () => Response.json({}) },
@@ -67,7 +68,7 @@ await storeModule.link((specifier) => {
   });
 });
 await storeModule.evaluate();
-imports["@/lib/task-store"] = { createTaskStore: storeModule.namespace.createTaskStore };
+imports["@/lib/task-store"] = { createTaskStore: storeModule.namespace.createTaskStore, TaskConflictError: storeModule.namespace.TaskConflictError };
 const source = ts.transpileModule(readFileSync(new URL("../app/api/tasks/route.ts", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;

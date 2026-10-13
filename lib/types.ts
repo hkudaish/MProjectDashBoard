@@ -52,4 +52,4 @@ export type Product = { deleted?: boolean; id: string; projectId?: string; name:
 
 export type Project = { deleted?: boolean; id: string; name: string; description: string; entityIds?: string[] };
 
-export type TaskPermissions = { canDelete?: boolean; canEdit: boolean; canEditMain: boolean; canUpdateMain: boolean; canAssign: boolean; editableDetailIds: string[] };
+export type TaskPermissions = { canAddDetails?: boolean; canDelete?: boolean; canEdit: boolean; canEditMain: boolean; canUpdateMain: boolean; canAssign: boolean; editableDetailIds: string[] };

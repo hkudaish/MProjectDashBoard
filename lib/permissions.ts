@@ -10,7 +10,7 @@ type Subject = { position?: string | null; active?: boolean; mustChangePassword?
 export function permissionsFor(user: Subject): ResourcePermissions {
   const all = { create: true, view: true, edit: true, update: true, delete: true };
   if (user.position === "system_admin") return { projects: { ...all }, products: { ...all }, tasks: { ...all } };
-  if (user.resourcePermissions) return structuredClone(user.resourcePermissions);
+  if (user.resourcePermissions) { const rights = structuredClone(user.resourcePermissions); if (rights.tasks.edit) rights.tasks.update = true; return rights; }
   const read = { create: false, view: true, edit: false, update: false, delete: false };
   const manager = Boolean(user.position && !["employee", "system_admin"].includes(user.position));
   return { projects: { ...read }, products: { ...read }, tasks: { create: manager, view: true, edit: manager, update: true, delete: false } };
@@ -22,9 +22,14 @@ function structure(details: unknown) { return Array.isArray(details) ? details.m
 export function requireChanges(user: Subject, resource: Resource, previous: Record<string, unknown>, next: Record<string, unknown>) {
   const keys = resource === "projects" ? ["name", "description"] : resource === "products" ? ["name", "target", "description"] : ["title", "plannedDate", "endDate", "ownerType", "assigneeEmail"];
   const different = (key: string) => JSON.stringify(previous[key] ?? (["details", "entityIds"].includes(key) ? [] : "")) !== JSON.stringify(next[key] ?? (["details", "entityIds"].includes(key) ? [] : ""));
-  const content = keys.some(different) || resource !== "projects" && JSON.stringify(structure(previous.details)) !== JSON.stringify(structure(next.details));
+  const mainContent = keys.some(different);
+  const content = mainContent || resource !== "projects" && JSON.stringify(structure(previous.details)) !== JSON.stringify(structure(next.details));
+  const oldRows = Array.isArray(previous.details) ? previous.details as Record<string, unknown>[] : [];
+  const newRows = Array.isArray(next.details) ? next.details as Record<string, unknown>[] : [];
+  const retainedRows = newRows.filter(row => oldRows.some(old => old.id === row.id));
+  const additionsOnly = resource === "tasks" && !mainContent && newRows.length > oldRows.length && retainedRows.length === oldRows.length && retainedRows.every((row, index) => JSON.stringify(structure([row])) === JSON.stringify(structure([oldRows[index]])));
   const updates = (resource === "projects" ? ["entityIds"] : resource === "tasks" ? ["status", "progress", "notes", "details"] : ["details"]).some(different);
-  if (content) requirePermission(user, resource, "edit");
+  if (content) requirePermission(user, resource, additionsOnly && !permitted(user, resource, "edit") ? "create" : "edit");
   if (updates && !content) requirePermission(user, resource, "update");
   if (content && resource === "tasks" && ["status", "progress", "notes"].some(different)) requirePermission(user, resource, "update");
   if (content && resource === "projects" && different("entityIds")) requirePermission(user, resource, "update");

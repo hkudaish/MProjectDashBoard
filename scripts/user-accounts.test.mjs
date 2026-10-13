@@ -72,6 +72,7 @@ const activityRoute = await exports("app/api/activity/route.ts");
 const userNotifyRoute = await exports("app/api/auth/users/notify/route.ts");
 const permissionsRoute = await exports("app/api/permissions/route.ts");
 const permissionRules = await exports("lib/permissions.ts");
+const undoRules = await exports("lib/task-undo.ts");
 const originalFetch = globalThis.fetch;
 const mailboxRoute = await exports("app/api/mailbox/route.ts");
 const gmailApi = await exports("lib/gmail-api.ts");
@@ -93,6 +94,75 @@ function cookie(response) { return response.headers.get("set-cookie").split(";")
 function resourceRequest(path, body, token, method) {
   return new Request(`${origin}/api/${path}`, { method, headers: { "Content-Type": "application/json", origin, ...(token ? { cookie: token } : {}) }, body: JSON.stringify(body) });
 }
+test("delegated task editing enables main fields and all details without granting assignment authority", async () => {
+  const admin = await adminCookie(), employee = await chatUser(admin, "alice@example.com", "Alice");
+  await chatUser(admin, "bob@example.com", "Bob");
+  const detail = { id: "delegated-row", description: "تفصيل قائم", status: "not_started", completionDate: "", ownerType: "unassigned", assignee: "Bob", assigneeEmail: "bob@example.com" };
+  await store.setJSON("tasks", [{ ...seed, assignee: "Bob", assigneeEmail: "bob@example.com", details: [detail] }]);
+  const rights = permissionRules.permissionsFor(await accounts.findAccount("alice@example.com"));
+  rights.tasks.edit = true; rights.tasks.update = false;
+  assert.equal((await permissionsRoute.PATCH(request({ email: "alice@example.com", permissions: rights }, admin, "PATCH"))).status, 200);
+  const shown = (await (await tasks.GET(request(null, employee, "GET"))).json()).tasks[0];
+  assert.equal(shown.permissions.canEditMain, true); assert.equal(shown.permissions.canUpdateMain, true); assert.equal(shown.permissions.canAddDetails, true); assert.equal(shown.permissions.canAssign, false);
+  assert.deepEqual(shown.permissions.editableDetailIds, [detail.id]);
+  const added = { id: "added-row", description: "تفصيل جديد", status: "not_started", completionDate: "", ownerType: "unassigned", assignee: "" };
+  assert.equal((await tasks.PATCH(request({ id: seed.id, title: "عنوان معدل", status: "review", details: [{ ...detail, description: "تفصيل معدل" }, added] }, employee, "PATCH"))).status, 200);
+  assert.equal((await tasks.PATCH(request({ id: seed.id, assigneeEmail: "" }, employee, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: seed.id, details: [added] }, employee, "PATCH"))).status, 200);
+  await permissionsRoute.PATCH(request({ email: "alice@example.com", permissions: null }, admin, "PATCH"));
+  assert.equal((await tasks.PATCH(request({ id: seed.id, title: "مرفوض بعد سحب الصلاحية" }, employee, "PATCH"))).status, 403);
+});
+test("task creation permission can add details without editing or deleting existing rows", async () => {
+  const admin = await adminCookie(), employee = await chatUser(admin, "alice@example.com", "Alice");
+  const old = { id: "old-row", description: "تفصيل محمي", status: "not_started", completionDate: "", ownerType: "unassigned", assignee: "" };
+  await store.setJSON("tasks", [{ ...seed, details: [old] }]);
+  const rights = permissionRules.permissionsFor(await accounts.findAccount("alice@example.com")); rights.tasks.create = true; rights.tasks.update = false;
+  await permissionsRoute.PATCH(request({ email: "alice@example.com", permissions: rights }, admin, "PATCH"));
+  const shown = (await (await tasks.GET(request(null, employee, "GET"))).json()).tasks[0];
+  assert.equal(shown.permissions.canAddDetails, true); assert.equal(shown.permissions.canEditMain, false);
+  const added = { ...old, id: "new-row", description: "تفصيل مضاف" };
+  assert.equal((await tasks.PATCH(request({ id: seed.id, details: [old, added] }, employee, "PATCH"))).status, 200);
+  assert.equal((await tasks.PATCH(request({ id: seed.id, details: [{ ...old, description: "تعديل غير مسموح" }, added] }, employee, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: seed.id, details: [added] }, employee, "PATCH"))).status, 403);
+  assert.equal((await tasks.PATCH(request({ id: seed.id, status: "completed" }, employee, "PATCH"))).status, 403);
+});
+test("undo restores deleted details and edited fields, rejects stale versions and obeys current permissions", async () => {
+  const admin = await adminCookie(), employee = await chatUser(admin, "alice@example.com", "Alice");
+  const rights = permissionRules.permissionsFor(await accounts.findAccount("alice@example.com")); rights.tasks.edit = true;
+  await permissionsRoute.PATCH(request({ email: "alice@example.com", permissions: rights }, admin, "PATCH"));
+  const detail = { id: "restore-row", description: "تفصيل للاستعادة", status: "review", completionDate: "2026-10-13", ownerType: "unassigned", assignee: "" };
+  const previous = { ...seed, details: [detail] };
+  await store.setJSON("tasks", [previous]);
+  const result = await tasks.PATCH(resourceRequest("tasks", { id: seed.id, title: "عنوان جديد", details: [], expectedUpdatedAt: previous.updatedAt }, employee, "PATCH"));
+  assert.equal(result.status, 200); const after = (await result.json()).task;
+  const undo = undoRules.taskUndo(previous, after); assert.ok(undo); assert.deepEqual(undo.patch, { title: seed.title, details: [detail] });
+  const restored = await tasks.PATCH(resourceRequest("tasks", { id: undo.id, ...undo.patch, expectedUpdatedAt: undo.version, undo: true }, employee, "PATCH"));
+  assert.equal(restored.status, 200); const restoredTask = (await restored.json()).task;
+  assert.equal(restoredTask.title, seed.title); assert.deepEqual(restoredTask.details, [detail]);
+  assert.equal(data.get("activity-log-v1").value.at(-1).action, "تعديل المهمة بطلب التراجع");
+  assert.equal((await tasks.PATCH(request({ id: seed.id, ...undo.patch, expectedUpdatedAt: undo.version }, employee, "PATCH"))).status, 409);
+  assert.equal(undoRules.taskUndo(restoredTask, restoredTask), null);
+  await permissionsRoute.PATCH(request({ email: "alice@example.com", permissions: null }, admin, "PATCH"));
+  assert.equal((await tasks.PATCH(request({ id: seed.id, title: "تراجع غير مسموح", expectedUpdatedAt: restoredTask.updatedAt, undo: true }, employee, "PATCH"))).status, 403);
+  assert.equal((await (await tasks.GET(request(null, admin, "GET"))).json()).tasks[0].title, seed.title);
+});
+test("concurrent task updates merge distinct tasks and reject competing updates to the same version", async () => {
+  const admin = await adminCookie();
+  await store.setJSON("tasks", [seed, { ...seed, id: "task-2", title: "مهمة ثانية", sourceOrder: 2 }]);
+  const separate = await Promise.all([
+    tasks.PATCH(request({ id: seed.id, status: "completed", expectedUpdatedAt: seed.updatedAt }, admin, "PATCH")),
+    tasks.PATCH(request({ id: "task-2", status: "review", expectedUpdatedAt: seed.updatedAt }, admin, "PATCH")),
+  ]);
+  assert.deepEqual(separate.map(response => response.status), [200, 200]);
+  const saved = (await (await tasks.GET(request(null, admin, "GET"))).json()).tasks;
+  assert.equal(saved.find(task => task.id === seed.id).status, "completed"); assert.equal(saved.find(task => task.id === "task-2").status, "review");
+  const version = saved.find(task => task.id === seed.id).updatedAt;
+  const competing = await Promise.all([
+    tasks.PATCH(request({ id: seed.id, notes: "تغيير أول", expectedUpdatedAt: version }, admin, "PATCH")),
+    tasks.PATCH(request({ id: seed.id, notes: "تغيير ثان", expectedUpdatedAt: version }, admin, "PATCH")),
+  ]);
+  assert.deepEqual(competing.map(response => response.status).sort(), [200, 409]);
+});
 test("audit records identify task titles, changed fields and deleted records without logging failed actions", async () => {
   const admin = await adminCookie();
   await store.setJSON("tasks", [{ ...seed, title: "مهمة التقرير", details: [] }]);
