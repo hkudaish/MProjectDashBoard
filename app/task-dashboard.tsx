@@ -1,4 +1,5 @@
 "use client";
+import { LoginDialog } from "@/components/login-dialog";
 import { permitted, type Resource, type PermissionAction } from "@/lib/permissions";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -44,7 +45,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Toaster } from "@/components/ui/sonner";
 import { TaskAssigneeSelect } from "@/components/task-assignee-select";
-import { PasswordChangeDialog, PasswordResetRequestDialog } from "@/components/password-dialogs";
+import { PasswordChangeDialog } from "@/components/password-dialogs";
 import { DEFAULT_PROJECT, projectInputSchema } from "@/lib/projects";
 import { type Entity, type PublicUser, type SessionInfo } from "@/lib/user-types";
 import { TaskDetailsEditor } from "@/components/task-details-editor";
@@ -215,10 +216,6 @@ export function TaskDashboard() {
   const [authConfigured, setAuthConfigured] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [loggingIn, setLoggingIn] = useState(false);
   const [userSession, setUserSession] = useState<SessionInfo | null>(null);
   const canResource = (resource: Resource, action: PermissionAction) => permitted(userSession, resource, action);
   useEffect(() => {
@@ -227,7 +224,6 @@ export function TaskDashboard() {
     router.replace("/settings/mail" + (params.has("gmail") ? "?gmail=" + encodeURIComponent(params.get("gmail")!) : ""));
   }, [router]);
   const [passwordOpen, setPasswordOpen] = useState(false);
-  const [resetRequestOpen, setResetRequestOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -324,31 +320,6 @@ export function TaskDashboard() {
   const canUpdateMain = creatingTask || draft?.permissions?.canUpdateMain === true || userSession?.position === "system_admin";
   const canAssign = creatingTask || draft?.permissions?.canAssign === true || userSession?.position === "system_admin";
   async function deleteRecord(resource: Resource, id: string) { if (!window.confirm("حذف هذا السجل نهائيًا؟ تتوقف العملية إذا كان مرتبطًا ببيانات أخرى.")) return; try { const response = await fetch(`/api/${resource}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); const data = await response.json() as { error?: string }; if (!response.ok) throw new Error(data.error || "تعذر الحذف."); toast.success("تم حذف السجل."); refreshTasks(); return true; } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر الحذف."); return false; } }
-  async function submitAdminLogin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoggingIn(true);
-    setLoginError("");
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-      });
-      const data = await response.json() as SessionInfo & { error?: string };
-      if (!response.ok || !data.authenticated) throw new Error(data.error || "تعذر تسجيل الدخول.");
-      setUserSession(data); setLastTaskChange(null); clearTaskUndo();
-
-
-      setLoginPassword("");
-      setLoginOpen(false);
-      toast.success(data.mustChangePassword ? "غيّر كلمة المرور لإكمال الدخول." : "تم تسجيل الدخول");
-    } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "تعذر تسجيل الدخول.");
-    } finally {
-      setLoggingIn(false);
-    }
-  }
-
   async function logoutAdmin() {
     try {
       const response = await fetch("/api/auth/logout", { method: "POST" });
@@ -621,7 +592,7 @@ export function TaskDashboard() {
           <div className="flex min-w-0 flex-wrap items-center gap-2"><ChatPanel key={`${userSession?.email ?? "guest"}-${Boolean(userSession?.canManageUsers)}`} session={userSession} />
             <UserGreeting name={userSession?.authenticated ? userSession.name : null} />
 
-            <Button variant="outline" className="rounded-xl border-slate-200 bg-white" disabled={authLoading} onClick={() => { if (userSession?.authenticated) void logoutAdmin(); else { setLoginError(""); setLoginOpen(true); } }}>{userSession?.authenticated ? <LogOut className="size-4" /> : <LogIn className="size-4" />}<span>{userSession?.authenticated ? "تسجيل الخروج" : "تسجيل الدخول"}</span></Button>
+            <Button variant="outline" className="rounded-xl border-slate-200 bg-white" disabled={authLoading} onClick={() => { if (userSession?.authenticated) void logoutAdmin(); else { setLoginOpen(true); } }}>{userSession?.authenticated ? <LogOut className="size-4" /> : <LogIn className="size-4" />}<span>{userSession?.authenticated ? "تسجيل الخروج" : "تسجيل الدخول"}</span></Button>
           </div>
         </div>
       </header>
@@ -761,19 +732,7 @@ export function TaskDashboard() {
         </Tabs>
       </div>
 
-      <Dialog open={loginOpen} onOpenChange={(open) => { if (!loggingIn) setLoginOpen(open); }}>
-        <DialogContent dir="rtl" className="text-right sm:max-w-md">
-          <DialogHeader className="text-right sm:text-right"><DialogTitle>تسجيل الدخول</DialogTitle><DialogDescription>أدخل بريد حسابك وكلمة المرور. تحدد صلاحيات الحساب إمكانية التعديل وإدارة المستخدمين.</DialogDescription></DialogHeader>
-          <form onSubmit={(event) => void submitAdminLogin(event)} className="grid gap-4">
-            <label className="grid gap-2 text-sm font-bold">البريد الإلكتروني<Input type="email" autoComplete="username" required value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} /></label>
-            <label className="grid gap-2 text-sm font-bold">كلمة المرور<Input type="password" autoComplete="current-password" required value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} /></label>
-            {loginError && <p role="alert" className="text-sm font-semibold text-red-700">{loginError}</p>}
-            {!authConfigured && <p role="alert" className="text-sm text-amber-800">تسجيل الدخول غير مُعدّ على الخادم.</p>}
-            <Button type="button" variant="link" className="justify-start px-0 text-teal-800" disabled={loggingIn} onClick={() => { setLoginPassword(""); setLoginOpen(false); setResetRequestOpen(true); }}>نسيت كلمة المرور؟ طلب إعادة ضبط</Button>
-            <DialogFooter className="flex-row-reverse justify-start sm:justify-start">{!creatingTask && draft?.permissions?.canDelete && <Button variant="outline" className="text-rose-700" disabled={saving} onClick={() => void deleteRecord("tasks", draft.id).then(ok => { if (ok) { setEditing(null); setDraft(null); } })}>حذف المهمة</Button>}<Button type="submit" className="bg-[#116d7b] hover:bg-[#0c5965]" disabled={loggingIn || !authConfigured}>{loggingIn ? <Loader2 className="animate-spin" /> : <LogIn />}دخول</Button><Button type="button" variant="outline" onClick={() => setLoginOpen(false)} disabled={loggingIn}>إلغاء</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <LoginDialog open={loginOpen} onOpenChange={setLoginOpen} configured={authConfigured} onSignedIn={session => { setUserSession(session); setLastTaskChange(null); }} />
 
 
 
@@ -781,7 +740,6 @@ export function TaskDashboard() {
 
 
       <PasswordChangeDialog open={Boolean(userSession?.authenticated && (passwordOpen || userSession.mustChangePassword))} required={Boolean(userSession?.mustChangePassword)} onOpenChange={setPasswordOpen} onLogout={logoutAdmin} onSaved={(session) => { setUserSession(session);   }} />
-      <PasswordResetRequestDialog open={resetRequestOpen} onOpenChange={setResetRequestOpen} />
 
       <Dialog open={!!projectDraft && Boolean(editingProjectId ? canResource("projects", "edit") || canResource("projects", "update") : canResource("projects", "create"))} onOpenChange={(open) => { if (!open && !projectSaving) { setProjectDraft(null); setEditingProjectId(null); } }}>
         <DialogContent dir="rtl" className="rounded-3xl text-right sm:max-w-lg"><DialogHeader className="text-right sm:text-right"><DialogTitle>{editingProjectId ? "تعديل المشروع" : "إضافة مشروع جديد"}</DialogTitle><DialogDescription>لكل مشروع منتجاته ومهامه. اختر المشروع من القائمة لمتابعة إنجازه وإدارة محتواه.</DialogDescription></DialogHeader>
