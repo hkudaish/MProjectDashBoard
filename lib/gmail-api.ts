@@ -1,13 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { getLocalStore } from "./local-store";
+import { getDataStore } from "./data-store";
 
 export const GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send"];
 const KEY = "gmail-oauth-v1";
 export function gmailAddress() { return process.env.GMAIL_USER?.trim().toLowerCase() || "hkudaish@gmail.com"; }
 export function oauthReady() { return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI && process.env.ADMIN_SESSION_SECRET && process.env.ADMIN_SESSION_SECRET.length >= 32); }
 function storage() {
-  return getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
+  return getDataStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
 }
 let memory: string | null = null;
 function encryptionKey() {

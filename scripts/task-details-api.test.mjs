@@ -60,7 +60,7 @@ const storeSource = ts.transpileModule(readFileSync(new URL("../lib/task-store.t
 }).outputText;
 const storeModule = new vm.SourceTextModule(storeSource);
 await storeModule.link((specifier) => {
-  if (specifier === "./local-store") return new vm.SyntheticModule(["getLocalStore"], function () { this.setExport("getLocalStore", () => null); });
+  if (specifier === "./data-store") return new vm.SyntheticModule(["getDataStore"], function () { this.setExport("getDataStore", () => null); });
   const values = specifier === "./task-details" ? { taskDetailsSchema } : specifier === "./task-progress" ? { progressForStatus } : imports[specifier];
   assert.ok(values);
   return new vm.SyntheticModule(Object.keys(values), function () {

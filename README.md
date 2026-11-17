@@ -71,6 +71,23 @@ Build the app:
 npm run build
 ```
 
+## Administrator backups and restore
+
+Open **Settings → النسخ الاحتياطي والاستعادة** (`/settings/backups`) as an active system administrator who has completed the required password change.
+
+- Create a full encrypted backup with a separate password of 12–128 characters. The file is downloaded and retained in backup history for later download. Passwords are not stored; a forgotten backup password cannot be recovered.
+- Backups include tasks, products, projects, entities, user accounts and password hashes, additional administrator emails, registration requests, chat, activity history, and the encrypted Gmail connection record. Absent datasets are preserved as absent. Files use versioned JSON, AES-256-GCM encryption, scrypt key derivation, and checksum verification. The request/file limit is 4 MiB.
+- To restore, upload a backup, enter its backup password, and review the before/after counts. Confirm with `استعادة` and verify the credentials of an active administrator contained in the selected backup. A preview expires after 10 minutes and must be repeated if application data changes.
+- Before replacement, the system saves a recovery backup using the same backup password. Restore stages and verifies every dataset before switching the active generation atomically. Storage failures before that switch leave the current data active. Writers use a shared storage lease and stale writes cannot overwrite a restored generation. All account session versions advance and the restore is recorded in the activity log.
+- Backup history and previous data generations are retained independently of restored application data. Download files to separate storage for recovery from loss of the Netlify site or local disk. Backup history itself is not recursively included in downloaded backups.
+- Deployment environment variables, external service secrets, application source, and remote Gmail mailbox contents are not included. Preserve environment configuration separately; restoring a Gmail connection record on another environment requires the original encryption key and compatible Google configuration.
+
+For persistent local operation, set `LOCAL_DATA_DIR=.local-data` in the ignored `.env.local`, then run `npm run dev`. This selects the Node/Next.js runtime on port 5173. Local records and backup archives stay under the ignored `.local-data` directory; production uses the site's Netlify Blobs store.
+
+Before this feature was installed, a separate local recovery copy of all records and `.env.local` was saved under the ignored `work/backups/` directory, with SHA-256 hashes in its manifest. Keep the environment file private. That filesystem recovery copy is separate from the encrypted files accepted by the administrator restore page.
+
+Run `npm test` for backup encryption, validation, access controls, recovery snapshots, restore failures, stale previews, and stale-writer coverage alongside the existing application tests.
+
 ## Project structure
 
 ```text

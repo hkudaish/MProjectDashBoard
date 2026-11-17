@@ -2,7 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ChevronLeft, FolderPlus, KeyRound, LayoutDashboard, ListChecks, LogIn, LogOut, Mail, PackagePlus, Settings, ShieldCheck, User, UserPlus, Users } from "lucide-react";
+import { ArchiveRestore, Building2, ChevronLeft, FolderPlus, KeyRound, LayoutDashboard, ListChecks, LogIn, LogOut, Mail, PackagePlus, Settings, ShieldCheck, User, UserPlus, Users } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { clearTaskUndo } from "@/lib/task-undo";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import type { RegistrationRequest } from "@/lib/registration-types";
 type Workspace = { openLogin: () => void; session: SessionInfo | null; loading: boolean; error: string; projects: Project[]; entities: Entity[]; users: PublicUser[]; projectId: string; setProjectId: (id: string) => void; refresh: () => Promise<void>; reloadCatalog: () => Promise<void>; logout: () => Promise<void>; approvedRequest: RegistrationRequest | null; setApprovedRequest: (request: RegistrationRequest | null) => void };
 const Context = createContext<Workspace | null>(null);
 export function useSettingsWorkspace() { const value = useContext(Context); if (!value) throw new Error("Settings context missing"); return value; }
-const ICONS = { account: User, permissions: ShieldCheck, projects: FolderPlus, products: PackagePlus, activity: ListChecks, registration: UserPlus, requests: ListChecks, mail: Mail, password: KeyRound, users: Users, entities: Building2 };
+const ICONS = { backups: ArchiveRestore, account: User, permissions: ShieldCheck, projects: FolderPlus, products: PackagePlus, activity: ListChecks, registration: UserPlus, requests: ListChecks, mail: Mail, password: KeyRound, users: Users, entities: Building2 };
 export function SettingsWorkspace({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [loginOpen, setLoginOpen] = useState(false);

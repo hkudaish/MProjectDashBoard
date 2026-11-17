@@ -1,5 +1,5 @@
 import { getStore } from "@netlify/blobs";
-import { getLocalStore } from "./local-store";
+import { getDataStore } from "./data-store";
 import { taskDetailsSchema } from "./task-details";
 import { progressForStatus } from "./task-progress";
 import { updateRecord } from "./versioned-store";
@@ -92,7 +92,7 @@ function createFallbackStore(): TaskStore {
 }
 
 export function createTaskStore(): TaskStore {
-  const local = getLocalStore();
+  const local = getDataStore();
   if (!local && (process.env.NODE_ENV !== "production" || process.env.TASK_STORE_MODE === "memory")) {
     return createFallbackStore();
   }

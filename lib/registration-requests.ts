@@ -1,7 +1,7 @@
 import { getStore } from "@netlify/blobs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { getLocalStore } from "./local-store";
+import { getDataStore } from "./data-store";
 import { listUsers, findAccount, emailSchema } from "./user-accounts";
 import { gmailConfigured, sendGmailMail, gmailAddress } from "./gmail-mail";
 import type { RegistrationRequest, RegistrationStatus } from "./registration-types";
@@ -19,7 +19,7 @@ export const registrationInputSchema = z.object({
 export const reviewInputSchema = z.object({ id: z.string().uuid(), status: z.enum(["approved", "rejected", "on_hold"]), note: z.string().trim().max(2000).default("") }).strict();
 export class RegistrationError extends Error {}
 function store() {
-  return getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
+  return getDataStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
 }
 async function snapshot() {
   const storage = store();

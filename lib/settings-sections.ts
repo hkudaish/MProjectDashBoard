@@ -1,6 +1,7 @@
 import { permitted } from "./permissions";
 import type { SessionInfo } from "./user-types";
 export const SETTINGS_SECTIONS = {
+  backups: { label: "النسخ الاحتياطي والاستعادة", description: "حفظ نسخة مشفّرة من جميع البيانات واستعادة نسخة سابقة بأمان." },
   account: { label: "الحساب الحالي", description: "بيانات حسابك والمنصب والجهة والمشروع المرتبط به." },
   permissions: { label: "صلاحيات المستخدمين", description: "تحديد صلاحيات إدارة المشاريع والمنتجات والمهام لكل مستخدم." },
   projects: { label: "إضافة مشروع", description: "إنشاء مشروع جديد وتحديد اسمه ووصفه والجهات التابعة له." },

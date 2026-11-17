@@ -1,5 +1,5 @@
 import { getStore } from "@netlify/blobs";
-import { getLocalStore } from "./local-store";
+import { getDataStore } from "./data-store";
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -24,7 +24,7 @@ export const createUserSchema = z.object({ email: emailSchema, name: z.string().
 export const updateUserSchema = z.object({ email: emailSchema, newEmail: emailSchema.optional(), name: z.string().trim().min(1).max(120).optional(), position: positionSchema.optional(), managerEmail: managerLink.optional(), additionalManagerEmail: managerLink.optional(), managerPosition: reportingSelection.optional(), entityId: entityLink.optional(), projectId: z.string().trim().min(1).max(120).nullable().optional(), canMessageLeadership: z.boolean().optional(), active: z.boolean().optional(), temporaryPassword: passwordSchema.optional() }).strict().refine((value) => Object.keys(value).some((key) => key !== "email"), "اختر التعديل المطلوب.");
 export const HIERARCHY_ERRORS = ["حدد المنصب والمسؤول المباشر.", "مدير النظام مستقل ولا يرتبط بمسؤول مباشر أو جهة.", "المسؤول المباشر غير متوافق مع الهيكل الإداري.", "لا يمكن ربط المستخدم بنفسه أو تكوين ارتباط إداري دائري.", "الجهة المحددة غير متاحة للاختيار.", "تعديل المنصب أو تعطيل المسؤول يتعارض مع ارتباطات مستخدمين تابعين له. عدّل ارتباطاتهم أولًا."];
 export const ACCOUNT_ERRORS = ["يوجد حساب بهذا البريد الإلكتروني بالفعل.", "لا يمكنك حذف حسابك الحالي.", "الحساب مرتبط بمستخدمين تابعين. عدّل ارتباطاتهم قبل الحذف."];
-const accountSchema = z.object({
+export const accountSchema = z.object({
   resourcePermissions: permissionsSchema.nullable().optional().transform(value => value ?? null),
   canMessageLeadership: z.boolean().optional().default(false),
   loginEmail: emailSchema.optional(), deleted: z.boolean().optional(), registrationRequestId: z.string().uuid().optional(),
@@ -39,7 +39,7 @@ type Account = z.infer<typeof accountSchema>;
 let memory: { data: Account[]; etag: string } | null = null;
 let memoryVersion = 0;
 function accountStore() {
-  return getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
+  return getDataStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
 }
 async function snapshot() {
   const store = accountStore();

@@ -1,8 +1,8 @@
 import { getStore } from "@netlify/blobs";
-import { getLocalStore } from "./local-store";
+import { getDataStore } from "./data-store";
 import { randomUUID } from "node:crypto";
 const memory = new Map<string, { data: unknown; etag: string }>();
-function storage() { return getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null); }
+function storage() { return getDataStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory" ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null); }
 export async function readRecord<T>(key: string, fallback: T): Promise<T> { const store = storage(); return (store ? await store.get(key, { type: "json" }) : memory.get(key)?.data) as T ?? fallback; }
 export async function updateRecord<T, R>(key: string, fallback: T, action: (data: T) => R): Promise<R> {
   for (let attempt = 0; attempt < 8; attempt++) {

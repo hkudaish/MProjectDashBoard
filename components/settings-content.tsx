@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
+import { BackupSettings } from "@/components/backup-settings";
 import { Button } from "@/components/ui/button";
 import { SETTINGS_SECTIONS, canOpenSettings, type SettingsSection } from "@/lib/settings-sections";
 import { POSITIONS } from "@/lib/user-types";
@@ -28,6 +29,7 @@ export function SettingsContent({ section }: { section: SettingsSection }) {
   if (!canOpenSettings(section, session)) return <section className="rounded-3xl border border-amber-200 bg-white p-8"><ShieldCheck className="mb-3 size-8 text-amber-600" /><h1 className="text-xl font-black">هذه الصفحة غير متاحة لحسابك</h1><p className="mt-3 text-sm leading-7 text-slate-600">{session?.authenticated ? "تواصل مع مدير النظام إذا كنت تحتاج صلاحية استخدام هذا القسم." : "سجّل الدخول للوصول إلى الإعدادات المتاحة لحسابك."}</p>{session?.authenticated ? <Button asChild variant="outline" className="mt-4"><Link href="/settings/account">الحساب الحالي</Link></Button> : <Button variant="outline" className="mt-4" onClick={workspace.openLogin}>تسجيل الدخول</Button>}</section>;
   let content: React.ReactNode;
   switch (section) {
+    case "backups": content = <BackupSettings />; break;
     case "account": content = <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">{session?.authenticated ? <dl className="grid gap-5 sm:grid-cols-2">{[["اسم المستخدم", session.name || "مستخدم"], ["المنصب", session.position ? POSITIONS[session.position] : "غير محدد"], ["البريد الإلكتروني", session.loginEmail || session.email], ["الجهة", session.position === "system_admin" ? "مستقل" : entities.find(entity => entity.id === session.entityId)?.name || "غير محددة"], ["اسم المشروع", projects.find(project => project.id === session.projectId)?.name || "غير محدد"], ["حالة الحساب", "نشط"]].map(([label, value]) => <div key={label} className="min-w-0 rounded-2xl bg-slate-50 p-4"><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-2 break-words text-sm font-bold text-slate-900">{value}</dd></div>)}</dl> : <div><h2 className="font-bold text-teal-900">أهلاً بك في نظام متابعة المشروع الإعلامي</h2><p className="mt-3 text-sm leading-7 text-slate-600">سجّل الدخول إلى حسابك، أو قدّم طلب تسجيل لمراجعته من مدير النظام.</p><div className="mt-5 flex flex-wrap gap-2"><Button onClick={workspace.openLogin}>تسجيل الدخول</Button><Button asChild variant="outline"><Link href="/settings/registration">طلب تسجيل</Link></Button></div></div>}</section>; break;
     case "permissions": content = <PermissionsDialog embedded open onOpenChange={close} initialEmail={params.get("user") ?? undefined} onChanged={changed} />; break;
     case "projects": content = <SettingsCreateForm />; break;

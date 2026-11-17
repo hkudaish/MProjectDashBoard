@@ -1,11 +1,11 @@
 import { getStore } from "@netlify/blobs";
-import { getLocalStore } from "./local-store";
+import { getDataStore } from "./data-store";
 import { DEFAULT_PRODUCTS, productInputSchema } from "./products";
 import type { Product } from "./types";
 
 const memory = new Map<string, Product>();
 export function createProductStore() {
-  const store = getLocalStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory"
+  const store = getDataStore() ?? (process.env.NODE_ENV === "production" && process.env.TASK_STORE_MODE !== "memory"
     ? getStore("wamy-task-dashboard", { consistency: "strong" }) : null);
   return {
     async getProducts(): Promise<Product[]> {

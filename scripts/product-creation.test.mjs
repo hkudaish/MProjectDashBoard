@@ -19,7 +19,7 @@ const stubs = {
   "@/lib/resource-access": { withResourceAccess: (_resource, _action, handler) => async request => admin && role === "admin" ? handler(request) : Response.json({}, { status: 403 }) },
   "@/lib/resource-deletion": { deleteResource: async () => Response.json({}) },
   "@/lib/permissions": { permitted: actor => Boolean(actor), requireChanges: () => {}, PermissionError: class extends Error {} },
-  "./local-store": { getLocalStore: () => null },
+  "./data-store": { getDataStore: () => null },
   "@/lib/task-assignment": { normalizeTaskAssignments: async (actor, task) => task, normalizeProductDetails: async (actor, details) => details, taskPermissions: () => ({ canEdit: true, canEditMain: true, canUpdateMain: true, canAssign: true, editableDetailIds: [] }), TaskPolicyError: class extends Error {} },
   "@/lib/user-accounts": { listUsers: async () => [] },
   "zod": { z: createRequire(import.meta.url)("zod").z },
